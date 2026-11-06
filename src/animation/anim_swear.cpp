@@ -7,7 +7,7 @@ namespace AnimSwear {
 namespace {
     // Базовые координаты
     const float CENTER_X = 120.0f;
-    const float BASE_Y = 135.0f;
+    const float BASE_Y = 100.0f;
 
     // Цветовая палитра: Фирменный неоново-зеленый (Лицо)
     uint16_t colorEye;

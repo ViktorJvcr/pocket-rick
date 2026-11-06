@@ -7,7 +7,7 @@ namespace FaceState {
     struct State {
         // Геометрия лица (текущие физические координаты)
         float cx = 120.0f;
-        float cy = 135.0f;
+        float cy = 100.0f;
         float spacing = 100.0f;
         float lw = 50.0f;
         float rw = 50.0f;

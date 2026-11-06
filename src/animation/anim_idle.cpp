@@ -18,14 +18,14 @@ namespace AnimIdle {
     const float eyeSpacing = 110.0f;
 
     // Текущие значения (Физика)
-    float cx = 120.0f, cy = 135.0f;
+    float cx = 120.0f, cy = 100.0f;
     float currentSpacing = eyeSpacing;
     float lw = eyeBaseW, lh = eyeBaseH;
     float rw = eyeBaseW, rh = eyeBaseH;
     float mw = 15.0f, mh = 4.0f;
 
     // Целевые значения (Куда стремимся)
-    float t_cx = 120.0f, t_cy = 135.0f;
+    float t_cx = 120.0f, t_cy = 100.0f;
     float t_spacing = eyeSpacing;
     float t_lw = eyeBaseW, t_lh = eyeBaseH;
     float t_rw = eyeBaseW, t_rh = eyeBaseH;
@@ -68,7 +68,7 @@ namespace AnimIdle {
         currentState = 0;
         t_lh = eyeBaseH; t_rh = eyeBaseH;
         t_lw = eyeBaseW; t_rw = eyeBaseW;
-        t_cx = 120.0f;   t_cy = 135.0f;
+        t_cx = 120.0f;   t_cy = 100.0f;
         t_spacing = eyeSpacing;
         t_mw = 15.0f;    t_mh = 4.0f;
 
@@ -162,42 +162,46 @@ namespace AnimIdle {
         }
     }
 
-    void applyCurrentState() {
+        void applyCurrentState() {
         if (!isBlinking) {
             t_lh = eyeBaseH; t_rh = eyeBaseH;
         }
         t_lw = eyeBaseW; t_rw = eyeBaseW;
-        t_cx = 120.0f;   t_cy = 135.0f;
+        t_cx = 120.0f;   t_cy = 100.0f;
         t_spacing = eyeSpacing;
         t_mw = 15.0f;    t_mh = 4.0f;
 
         switch (currentState) {
             case 1:
-                t_cx = 120.0f + random(-25, 26);
-                t_cy = 135.0f + random(-15, 16);
+                t_cx = 120.0f + random(-16, 17);
+                t_cy = 100.0f + random(-10, 11);
                 t_mw = 10.0f;
                 break;
+
             case 2:
-                t_cy = 155.0f;
+                t_cy = 112.0f;
                 if (!isBlinking) { t_lh = 40.0f; t_rh = 40.0f; }
                 t_mw = 25.0f; t_mh = 2.0f;
                 break;
+
             case 3:
                 t_lw = 35.0f; if (!isBlinking) t_lh = 55.0f;
                 t_rw = 60.0f; if (!isBlinking) t_rh = 90.0f;
-                t_cy = 125.0f;
+                t_cy = 95.0f;
                 t_mw = 12.0f; t_mh = 12.0f;
                 break;
+
             case 4:
                 t_lw = 65.0f; t_rw = 65.0f;
                 if (!isBlinking) { t_lh = 25.0f; t_rh = 25.0f; }
                 t_mw = 20.0f; t_mh = 6.0f;
-                t_cy = 145.0f;
+                t_cy = 105.0f;
                 break;
+
             case 5: {
                 int dir = random(0, 2) == 0 ? -1 : 1;
-                t_cx = 120.0f + (dir * 35.0f);
-                t_cy = 135.0f;
+                t_cx = 120.0f + (dir * 22.0f);
+                t_cy = 100.0f;
                 t_mw = 8.0f; t_mh = 2.0f;
 
                 if (!isBlinking) {
@@ -210,9 +214,10 @@ namespace AnimIdle {
                     }
                 }
                 break;
-            }
-        }
-    }
+            } // закрываем фигурные скобки блока case 5
+        }     // закрываем switch (currentState)
+    }         // закрываем саму функцию applyCurrentState()
+
 
     void updatePhysics() {
         float breathY = sinf(millis() / 400.0f) * 3.0f;
@@ -222,10 +227,10 @@ namespace AnimIdle {
         float current_t_cy = t_cy + breathY + (isGoingToSleep ? 0.0f : ImuSensor::getParallaxY());
 
         // Мягкая защита границ экрана, чтобы глаза со свечением не уезжали за край
-        if (current_t_cx < 55.0f)  current_t_cx = 55.0f;
-        if (current_t_cx > 185.0f) current_t_cx = 185.0f;
-        if (current_t_cy < 90.0f)  current_t_cy = 90.0f;
-        if (current_t_cy > 180.0f) current_t_cy = 180.0f;
+        if (current_t_cx < 72.0f)  current_t_cx = 72.0f;
+        if (current_t_cx > 168.0f) current_t_cx = 168.0f;
+        if (current_t_cy < 65.0f)  current_t_cy = 65.0f;
+        if (current_t_cy > 135.0f) current_t_cy = 135.0f;
 
         float speed = 0.12f;
         if (isGoingToSleep) speed = 0.05f;
@@ -295,7 +300,7 @@ namespace AnimIdle {
 
         // Рот
         int m_x = (int)(cx - (mw / 2.0f));
-        int m_y = (int)(cy + 50.0f);
+        int m_y = (int)(cy + 42.0f);
 
         if (mh > 8.0f) {
             sprite.fillCircle((int)cx, m_y + (int)(mh / 2.0f), (int)(mw / 2.0f), COLOR_EYE);

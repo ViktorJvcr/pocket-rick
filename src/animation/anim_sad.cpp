@@ -7,7 +7,7 @@ namespace {
 
     // --- КОНСТАНТЫ И БАЗОВЫЕ РАЗМЕРЫ ---
     const float CENTER_X = 120.0f;
-    const float BASE_Y = 135.0f;        // Опущенный вниз грустный взгляд
+    const float BASE_Y = 100.0f;        // Опущенный вниз грустный взгляд
     const float EYE_SPACING = 100.0f;  // Чуть ближе к центру для уязвимого вида
 
     const float EYE_BASE_W = 48.0f;

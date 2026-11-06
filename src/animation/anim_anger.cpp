@@ -14,7 +14,7 @@ namespace {
 
     // Константы координат
     const float CENTER_X = 120.0f;
-    const float BASE_Y = 135.0f;
+    const float BASE_Y = 100.0f;
     const float EYE_SPACING = 104.0f;
 
     // Переменные физики (текущие)

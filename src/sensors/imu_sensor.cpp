@@ -208,8 +208,8 @@ void update() {
         float deltaAy = ay - baseAy;
         float deltaAz = az - baseAz;
 
-        float rawTargetX = DIR_X * (deltaAy * TILT_GAIN_X - (cleanGz + cleanGx) * GYRO_GAIN_X);
-        float rawTargetY = DIR_Y * ((deltaAx - deltaAz) * TILT_GAIN_Y + cleanGy * GYRO_GAIN_Y);
+        float rawTargetX = DIR_X * (deltaAx * TILT_GAIN_X + cleanGy * GYRO_GAIN_X);
+        float rawTargetY = DIR_Y * (deltaAy * TILT_GAIN_Y + cleanGx * GYRO_GAIN_Y);
 
         rawTargetX = clampVal(rawTargetX, -MAX_OFFSET_X, MAX_OFFSET_X);
         rawTargetY = clampVal(rawTargetY, -MAX_OFFSET_Y, MAX_OFFSET_Y);
