@@ -1,0 +1,11 @@
+#pragma once
+
+enum Emotion {
+    EMOTION_NEUTRAL,
+    EMOTION_HAPPY,
+    EMOTION_SAD,
+    EMOTION_ANGRY,
+    EMOTION_SUSPICIOUS,
+    EMOTION_MUSIC,
+    EMOTION_SLEEP
+};

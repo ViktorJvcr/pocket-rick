@@ -1,40 +1,62 @@
 #pragma once
 #include <Arduino.h>
-#include "config.h"
+#include <TFT_eSPI.h>
 
-struct FacePalette {
-    float rEye, gEye, bEye;
-    float rGlow1, gGlow1, bGlow1;
-    float rGlow2, gGlow2, bGlow2;
-    uint16_t colorEye, colorGlow1, colorGlow2, colorBg;
-};
+namespace FaceState {
 
-class FaceState {
-public:
-    static FacePalette current;
-    static FacePalette target;
-    static float cx, cy, spacing;
-    static float lw, lh, lr, rw, rh, rr, mw, mh;
+    struct State {
+        // Геометрия лица (текущие физические координаты)
+        float cx = 120.0f;
+        float cy = 135.0f;
+        float spacing = 100.0f;
+        float lw = 50.0f;
+        float rw = 50.0f;
+        float lh = 80.0f;
+        float rh = 80.0f;
+        float mw = 15.0f;
+        float mh = 4.0f;
 
-    static void init();
-    static void setTargetPalette(uint8_t rE, uint8_t gE, uint8_t bE,
-                                 uint8_t rG1, uint8_t gG1, uint8_t bG1,
-                                 uint8_t rG2, uint8_t gG2, uint8_t bG2);
-    static void updateColorLerp(float speed = 0.12f);
+        // Текущие плавающие RGB компоненты для плавного перелива цвета
+        float eyeR = 50.0f,  eyeG = 255.0f, eyeB = 100.0f;
+        float gl1R = 10.0f,  gl1G = 120.0f, gl1B = 30.0f;
+        float gl2R = 0.0f,   gl2G = 40.0f,  gl2B = 10.0f;
 
-    // Рефлекторный прищур перед сменой эмоции: lh/rh -> SQUINT_H (13px), lr/rr -> SQUINT_R (5px)
-    static void prepareTransition(bool squint = true);
+        // Целевые RGB компоненты текущей эмоции
+        float t_eyeR = 50.0f,  t_eyeG = 255.0f, t_eyeB = 100.0f;
+        float t_gl1R = 10.0f,  t_gl1G = 120.0f, t_gl1B = 30.0f;
+        float t_gl2R = 0.0f,   t_gl2G = 40.0f,  t_gl2B = 10.0f;
 
-    static void loadGeometry(float &outCx, float &outCy, float &outSp,
-                             float &outLw, float &outLh, float &outLr,
-                             float &outRw, float &outRh, float &outRr,
-                             float &outMw, float &outMh);
-    static void saveGeometry(float inCx, float inCy, float inSp,
-                             float inLw, float inLh, float inLr,
-                             float inRw, float inRh, float inRr,
-                             float inMw, float inMh);
-    static uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b);
+        // Готовые 16-битные цвета RGB565 для отрисовки на текущем кадре
+        uint16_t colorEye   = 0;
+        uint16_t colorGlow1 = 0;
+        uint16_t colorGlow2 = 0;
+    };
 
-private:
-    static void refreshPacked(FacePalette& p);
-};
+    // Глобальный экземпляр состояния лица
+    extern State current;
+
+    // Инициализация базовых цветов
+    void init(TFT_eSPI &tft);
+
+    // Задать целевую палитру эмоции (вызывается в reset() каждой анимации)
+    void setTargetPalette(uint8_t eR, uint8_t eG, uint8_t eB,
+                          uint8_t g1R, uint8_t g1G, uint8_t g1B,
+                          uint8_t g2R, uint8_t g2G, uint8_t g2B);
+
+    // Плавное обновление цвета (вызывается на каждом кадре)
+    void updateColors(TFT_eSPI &tft, float speed = 0.14f);
+
+    // Подготовка к переходу (blink = true делает рефлекторный прищур при смене эмоции)
+    void prepareTransition(bool blink = true);
+
+    // Сохранить текущие координаты из активной анимации в общее состояние
+    void saveGeometry(float cx, float cy, float spacing,
+                      float lw, float rw, float lh, float rh,
+                      float mw, float mh);
+
+    // Загрузить координаты из общего состояния в новую анимацию при ее старте
+    void loadGeometry(float &cx, float &cy, float &spacing,
+                      float &lw, float &rw, float &lh, float &rh,
+                      float &mw, float &mh);
+
+} // namespace FaceState

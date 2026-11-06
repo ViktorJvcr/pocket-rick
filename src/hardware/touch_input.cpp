@@ -1,77 +1,94 @@
 #include "touch_input.h"
-#include "pins.h"
 
 namespace TouchInput {
-
 namespace {
-    const uint8_t kPins[COUNT] = { TOUCH_MID_PIN, TOUCH_RIGHT_PIN };
+    unsigned long initTime = 0;
 
-    struct BtnState {
-        bool     raw        = false;
-        bool     stable     = false;
-        bool     prevStable = false;
-        uint32_t lastChange = 0;
-        uint32_t pressedAt  = 0;
-        bool     longFired  = false;
-        bool     clickFlag  = false;
-        bool     longFlag   = false;
-        bool     inChord    = false;   // участвовала в аккорде -> клик не генерировать
-    } st[COUNT];
+    struct TouchBtn {
+        uint8_t pin;
+        bool lastStableState;
+        bool lastRawState;
+        unsigned long lastDebounceTime;
+        bool pressedEvent;
+    };
 
-    uint32_t armedAt   = 0;
-    bool     chordFlag = false;
-    bool     chordLatched = false;
-}
+    TouchBtn btnMid   = { TOUCH_MID_PIN,   false, false, 0, false };
+    TouchBtn btnRight = { TOUCH_RIGHT_PIN, false, false, 0, false };
 
-uint8_t pinOf(Button b) { return kPins[b]; }
+    void processButton(TouchBtn &btn, unsigned long now) {
+        // TTP223 выдает активный HIGH при касании
+        bool rawState = (digitalRead(btn.pin) == HIGH);
+
+        if (rawState != btn.lastRawState) {
+            btn.lastDebounceTime = now;
+        }
+
+        if ((now - btn.lastDebounceTime) > DEBOUNCE_DELAY_MS) {
+            if (rawState != btn.lastStableState) {
+                btn.lastStableState = rawState;
+                // Фронт нажатия: переход LOW -> HIGH
+                if (btn.lastStableState) {
+                    btn.pressedEvent = true;
+                }
+            }
+        }
+
+        btn.lastRawState = rawState;
+    }
+} // anonymous namespace
 
 void init() {
-    for (uint8_t i = 0; i < COUNT; ++i) pinMode(kPins[i], INPUT);   // TTP223 push-pull, подтяжки не нужны
-    armedAt = millis() + ARM_DELAY_MS;
+    // Вход без подтяжки, так как TTP223 имеет собственный выход CMOS/Push-Pull (активный HIGH)
+    pinMode(TOUCH_MID_PIN, INPUT);
+    pinMode(TOUCH_RIGHT_PIN, INPUT);
+
+    initTime = millis();
+    btnMid.lastDebounceTime = initTime;
+    btnRight.lastDebounceTime = initTime;
+    Serial.println("[TOUCH] TTP223 initialized on pins 20/21 (Arm delay 400ms)");
 }
 
 void update() {
-    uint32_t now = millis();
-    if ((int32_t)(now - armedAt) < 0) return;      // ещё "не взведено"
+    unsigned long now = millis();
 
-    // --- дебаунс каждой кнопки ---
-    for (uint8_t i = 0; i < COUNT; ++i) {
-        BtnState& b = st[i];
-        bool r = digitalRead(kPins[i]) == HIGH;
-        if (r != b.raw) { b.raw = r; b.lastChange = now; }
-        if (now - b.lastChange >= DEBOUNCE_MS) b.stable = b.raw;
+    // Первые ARM_DELAY_MS игнорируем любые уровни при перезапуске UART0 пинов
+    if (now - initTime < ARM_DELAY_MS) {
+        btnMid.lastStableState = false;
+        btnMid.lastRawState = false;
+        btnMid.pressedEvent = false;
+
+        btnRight.lastStableState = false;
+        btnRight.lastRawState = false;
+        btnRight.pressedEvent = false;
+        return;
     }
 
-    // --- аккорд: обе стабильно нажаты ---
-    bool both = st[MID].stable && st[RIGHT].stable;
-    if (both && !chordLatched) {
-        chordLatched = true;
-        chordFlag = true;
-        st[MID].inChord = st[RIGHT].inChord = true;
-    }
-    if (!st[MID].stable && !st[RIGHT].stable) chordLatched = false;
-
-    // --- фронты, клики, долгие нажатия ---
-    for (uint8_t i = 0; i < COUNT; ++i) {
-        BtnState& b = st[i];
-        if (b.stable && !b.prevStable) {          // нажатие
-            b.pressedAt = now; b.longFired = false; b.inChord = false;
-        }
-        if (b.stable && !b.longFired && !b.inChord && now - b.pressedAt >= LONG_PRESS_MS) {
-            b.longFired = true; b.longFlag = true;
-        }
-        if (!b.stable && b.prevStable) {          // отпускание
-            if (!b.longFired && !b.inChord && now - b.pressedAt >= DEBOUNCE_MS) b.clickFlag = true;
-            b.inChord = false;
-        }
-        b.prevStable = b.stable;
-    }
+    processButton(btnMid, now);
+    processButton(btnRight, now);
 }
 
-bool isPressed(Button b)       { return st[b].stable; }
-bool wasClicked(Button b)      { bool f = st[b].clickFlag; st[b].clickFlag = false; return f; }
-bool wasLongPressed(Button b)  { bool f = st[b].longFlag;  st[b].longFlag  = false; return f; }
-bool wasChord()                { bool f = chordFlag; chordFlag = false; return f; }
-bool bothHeld()                { return st[MID].stable && st[RIGHT].stable; }
+bool isMidPressed() {
+    if (btnMid.pressedEvent) {
+        btnMid.pressedEvent = false;
+        return true;
+    }
+    return false;
+}
 
-}  // namespace TouchInput
+bool isRightPressed() {
+    if (btnRight.pressedEvent) {
+        btnRight.pressedEvent = false;
+        return true;
+    }
+    return false;
+}
+
+bool isMidDown() {
+    return btnMid.lastStableState;
+}
+
+bool isRightDown() {
+    return btnRight.lastStableState;
+}
+
+} // namespace TouchInput

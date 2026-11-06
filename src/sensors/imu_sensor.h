@@ -1,36 +1,20 @@
 #pragma once
-
-#include <stdint.h>
+#include <Arduino.h>
 
 namespace ImuSensor {
+    void init();
+    void update();
+    
+    // Одиночное резкое поднятие / рывок (для триггера испуга SCARED)
+    bool isSuddenLiftDetected();
 
-bool init();
-void update(uint32_t now);
+    // Продолжительная тряска или кручение (для триггера головокружения DIZZY)
+    bool isShakeDetected();
 
-bool isConnected();
-uint8_t getAddress();
+    // Плавное смещение взгляда от наклонов и поворотов (Живой параллакс в пикселях)
+    float getParallaxX();
+    float getParallaxY();
 
-// Дополнительный диагностический метод.
-// true после успешной калибровки неподвижного датчика.
-bool isCalibrated();
-
-// Ускорение, g.
-float getAccX();
-float getAccY();
-float getAccZ();
-
-// Угловая скорость, градусы/секунду.
-// После калибровки — с компенсацией смещения нуля.
-float getGyrX();
-float getGyrY();
-float getGyrZ();
-
-// Смещение взгляда, пиксели.
-float getParallaxX();
-float getParallaxY();
-
-// Флаги событий сбрасываются при чтении.
-bool isSuddenLiftDetected();
-bool isShakeDetected();
-
-} // namespace ImuSensor
+    // Флаг успешной инициализации BMI160
+    bool isReady();
+}

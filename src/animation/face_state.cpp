@@ -1,77 +1,76 @@
 #include "face_state.h"
 
-FacePalette FaceState::current;
-FacePalette FaceState::target;
+namespace FaceState {
 
-float FaceState::cx = FACE_CX;
-float FaceState::cy = FACE_CY;
-float FaceState::spacing = FACE_SPACING;
-float FaceState::lw = EYE_W, FaceState::lh = EYE_H, FaceState::lr = EYE_R;
-float FaceState::rw = EYE_W, FaceState::rh = EYE_H, FaceState::rr = EYE_R;
-float FaceState::mw = MOUTH_W, FaceState::mh = MOUTH_H;
+    State current;
 
-uint16_t FaceState::rgb565(uint8_t r, uint8_t g, uint8_t b) {
-    return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
-}
+    void init(TFT_eSPI &tft) {
+        current.colorEye   = tft.color565((uint8_t)current.eyeR, (uint8_t)current.eyeG, (uint8_t)current.eyeB);
+        current.colorGlow1 = tft.color565((uint8_t)current.gl1R, (uint8_t)current.gl1G, (uint8_t)current.gl1B);
+        current.colorGlow2 = tft.color565((uint8_t)current.gl2R, (uint8_t)current.gl2G, (uint8_t)current.gl2B);
+    }
 
-void FaceState::refreshPacked(FacePalette& p) {
-    p.colorEye   = rgb565((uint8_t)lroundf(p.rEye),   (uint8_t)lroundf(p.gEye),   (uint8_t)lroundf(p.bEye));
-    p.colorGlow1 = rgb565((uint8_t)lroundf(p.rGlow1), (uint8_t)lroundf(p.gGlow1), (uint8_t)lroundf(p.bGlow1));
-    p.colorGlow2 = rgb565((uint8_t)lroundf(p.rGlow2), (uint8_t)lroundf(p.gGlow2), (uint8_t)lroundf(p.bGlow2));
-    p.colorBg    = 0x0000;
-}
+    void setTargetPalette(uint8_t eR, uint8_t eG, uint8_t eB,
+                          uint8_t g1R, uint8_t g1G, uint8_t g1B,
+                          uint8_t g2R, uint8_t g2G, uint8_t g2B) {
+        current.t_eyeR = (float)eR; current.t_eyeG = (float)eG; current.t_eyeB = (float)eB;
+        current.t_gl1R = (float)g1R; current.t_gl1G = (float)g1G; current.t_gl1B = (float)g1B;
+        current.t_gl2R = (float)g2R; current.t_gl2G = (float)g2G; current.t_gl2B = (float)g2B;
+    }
 
-void FaceState::init() {
-    cx = FACE_CX; cy = FACE_CY; spacing = FACE_SPACING;
-    lw = rw = EYE_W; lh = rh = EYE_H; lr = rr = EYE_R;
-    mw = MOUTH_W; mh = MOUTH_H;
+    void updateColors(TFT_eSPI &tft, float speed) {
+        current.eyeR += (current.t_eyeR - current.eyeR) * speed;
+        current.eyeG += (current.t_eyeG - current.eyeG) * speed;
+        current.eyeB += (current.t_eyeB - current.eyeB) * speed;
 
-    setTargetPalette(IDLE_EYE_R, IDLE_EYE_G, IDLE_EYE_B,
-                     IDLE_G1_R,  IDLE_G1_G,  IDLE_G1_B,
-                     IDLE_G2_R,  IDLE_G2_G,  IDLE_G2_B);
-    current = target;                  // без плавного "включения" на старте
-    refreshPacked(current);
-}
+        current.gl1R += (current.t_gl1R - current.gl1R) * speed;
+        current.gl1G += (current.t_gl1G - current.gl1G) * speed;
+        current.gl1B += (current.t_gl1B - current.gl1B) * speed;
 
-void FaceState::setTargetPalette(uint8_t rE, uint8_t gE, uint8_t bE,
-                                 uint8_t rG1, uint8_t gG1, uint8_t bG1,
-                                 uint8_t rG2, uint8_t gG2, uint8_t bG2) {
-    target.rEye = rE;    target.gEye = gE;    target.bEye = bE;
-    target.rGlow1 = rG1; target.gGlow1 = gG1; target.bGlow1 = bG1;
-    target.rGlow2 = rG2; target.gGlow2 = gG2; target.bGlow2 = bG2;
-    refreshPacked(target);
-}
+        current.gl2R += (current.t_gl2R - current.gl2R) * speed;
+        current.gl2G += (current.t_gl2G - current.gl2G) * speed;
+        current.gl2B += (current.t_gl2B - current.gl2B) * speed;
 
-void FaceState::updateColorLerp(float speed) {
-    float* c = &current.rEye;
-    float* t = &target.rEye;
-    for (int i = 0; i < 9; ++i) c[i] += (t[i] - c[i]) * speed;   // 9 float-каналов подряд
-    refreshPacked(current);
-}
+        current.colorEye   = tft.color565((uint8_t)current.eyeR, (uint8_t)current.eyeG, (uint8_t)current.eyeB);
+        current.colorGlow1 = tft.color565((uint8_t)current.gl1R, (uint8_t)current.gl1G, (uint8_t)current.gl1B);
+        current.colorGlow2 = tft.color565((uint8_t)current.gl2R, (uint8_t)current.gl2G, (uint8_t)current.gl2B);
+    }
 
-void FaceState::prepareTransition(bool squint) {
-    if (!squint) return;
-    lh = rh = SQUINT_H;
-    lr = rr = SQUINT_R;
-    // ширина не трогается — следующая эмоция сама "раскроет" глаза пружиной
-}
+    void prepareTransition(bool blink) {
+        if (blink) {
+            // Рефлекторный прищур при смене эмоции:
+            // сжимаем высоту глаз, чтобы новая эмоция плавно распахнула их пружиной
+            if (current.lh > 14.0f) current.lh = 14.0f;
+            if (current.rh > 14.0f) current.rh = 14.0f;
+        }
+    }
 
-void FaceState::loadGeometry(float &outCx, float &outCy, float &outSp,
-                             float &outLw, float &outLh, float &outLr,
-                             float &outRw, float &outRh, float &outRr,
-                             float &outMw, float &outMh) {
-    outCx = cx; outCy = cy; outSp = spacing;
-    outLw = lw; outLh = lh; outLr = lr;
-    outRw = rw; outRh = rh; outRr = rr;
-    outMw = mw; outMh = mh;
-}
+    void saveGeometry(float cx, float cy, float spacing,
+                      float lw, float rw, float lh, float rh,
+                      float mw, float mh) {
+        current.cx = cx;
+        current.cy = cy;
+        current.spacing = spacing;
+        current.lw = lw;
+        current.rw = rw;
+        current.lh = lh;
+        current.rh = rh;
+        current.mw = mw;
+        current.mh = mh;
+    }
 
-void FaceState::saveGeometry(float inCx, float inCy, float inSp,
-                             float inLw, float inLh, float inLr,
-                             float inRw, float inRh, float inRr,
-                             float inMw, float inMh) {
-    cx = inCx; cy = inCy; spacing = inSp;
-    lw = inLw; lh = inLh; lr = inLr;
-    rw = inRw; rh = inRh; rr = inRr;
-    mw = inMw; mh = inMh;
-}
+    void loadGeometry(float &cx, float &cy, float &spacing,
+                      float &lw, float &rw, float &lh, float &rh,
+                      float &mw, float &mh) {
+        cx = current.cx;
+        cy = current.cy;
+        spacing = current.spacing;
+        lw = current.lw;
+        rw = current.rw;
+        lh = current.lh;
+        rh = current.rh;
+        mw = current.mw;
+        mh = current.mh;
+    }
+
+} // namespace FaceState
