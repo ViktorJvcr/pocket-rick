@@ -3,6 +3,7 @@
 
 enum class AnimType {
     IDLE,
+    JOY,
     ANGER,
     DIZZY,
     SAD,

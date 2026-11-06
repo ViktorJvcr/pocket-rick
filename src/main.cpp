@@ -105,7 +105,7 @@ void loop() {
     // 1. Опрос сенсорных кнопок
     TouchInput::update();
 
-    // Проверка входа/выхода в сервисное меню
+    // Проверка входа в сервисное меню (две кнопки > 1.5 сек)
     if (TouchInput::isBothHold()) {
         inServiceMenu = !inServiceMenu;
         Serial.printf("[SYSTEM] Сервисное меню: %s\n", inServiceMenu ? "ОТКРЫТО" : "ЗАКРЫТО");
@@ -114,27 +114,77 @@ void loop() {
     if (inServiceMenu) {
         if (TouchInput::isRightClicked() || TouchInput::isMidClicked()) {
             inServiceMenu = false;
-            Serial.println("[SYSTEM] Выход из сервисного меню к анимациям");
         }
         drawServiceMenu(sprite);
     } else {
-        if (TouchInput::isRightClicked()) {
-            AnimManager::nextState();
-            Serial.printf("[TOUCH GPIO 21] Переключение -> %s\n", 
-                          AnimManager::getAnimName(AnimManager::getCurrentAnim()));
+        // === ЛОГИКА ПОГЛАЖИВАНИЯ И УСПОКОЕНИЯ (СЕНСОР GPIO 21) ===
+        static unsigned long petHoldStart = 0;
+        static unsigned long angerCooldownStart = 0; // Таймер остывания после злости
+
+        if (TouchInput::isRightDown()) {
+            if (petHoldStart == 0) {
+                petHoldStart = millis();
+            }
+
+            unsigned long holdTime = millis() - petHoldStart;
+
+            // 1. Прижали палец от 300 мс до 4.5 сек -> Радость (JOY)
+            if (holdTime > 300 && holdTime < 4500) {
+                if (AnimManager::getCurrentAnim() != AnimType::JOY && 
+                    AnimManager::getCurrentAnim() != AnimType::ANGER) {
+                    AnimManager::setAnimation(AnimType::JOY);
+                    Serial.println("[ROBOT] Робота гладят -> JOY ^^");
+                }
+            } 
+            // 2. Затискали дольше 4.5 секунд -> Перегрузка и срыв в ярость (ANGER)
+            else if (holdTime >= 4500) {
+                if (AnimManager::getCurrentAnim() != AnimType::ANGER) {
+                    AnimManager::setAnimation(AnimType::ANGER);
+                    Serial.println("[ROBOT] Перегрузка лаской -> ANGER!");
+                }
+            }
+        } else {
+            // Палец убрали
+            if (petHoldStart != 0) {
+                // Если робот радовался — сразу возвращаем в IDLE
+                if (AnimManager::getCurrentAnim() == AnimType::JOY) {
+                    AnimManager::setAnimation(AnimType::IDLE);
+                    Serial.println("[ROBOT] Поглаживание окончено -> IDLE");
+                }
+                // Если робот был в ANGER из-за перегрузки — запускаем таймер остывания
+                else if (AnimManager::getCurrentAnim() == AnimType::ANGER) {
+                    angerCooldownStart = millis();
+                    Serial.println("[ROBOT] Палец убран: робот остывает 3 секунды...");
+                }
+                petHoldStart = 0;
+            }
+
+            // Автоматическое успокоение: спустя 3 секунды после того, как убрали палец
+            if (angerCooldownStart != 0 && (millis() - angerCooldownStart >= 3000)) {
+                if (AnimManager::getCurrentAnim() == AnimType::ANGER) {
+                    AnimManager::setAnimation(AnimType::IDLE);
+                    Serial.println("[ROBOT] Робот успокоился -> IDLE");
+                }
+                angerCooldownStart = 0;
+            }
+
+            // Обычный короткий клик по-прежнему листает анимации
+            if (TouchInput::isRightClicked()) {
+                angerCooldownStart = 0; // Сбрасываем таймер при ручном клике
+                AnimManager::nextState();
+                Serial.printf("[TOUCH GPIO 21] Клик -> %s\n", 
+                              AnimManager::getAnimName(AnimManager::getCurrentAnim()));
+            }
         }
 
-        if (TouchInput::isMidClicked()) {
-            AnimManager::nextState();
-            Serial.printf("[TOUCH GPIO 20] Переключение -> %s\n", 
-                          AnimManager::getAnimName(AnimManager::getCurrentAnim()));
-        }
-
+        // 2. Опрос IMU (параллакс глаз)
         ImuSensor::update();
+
+        // 3. Отрисовка кадра
         AnimManager::runCurrentAnimation(tft, sprite);
     }
 
-    // 2. Расчет FPS
+    // 4. Расчет FPS и задержка кадра
     frameCount++;
     unsigned long now = millis();
     if (now - lastFpsPrint >= 1000) {
@@ -143,7 +193,6 @@ void loop() {
         lastFpsPrint = now;
     }
 
-    // 3. Неблокирующий тайминг кадра
     unsigned long renderElapsed = millis() - now;
     if (renderElapsed < TARGET_FRAME_MS) {
         delay(1);

@@ -6,6 +6,8 @@
 #include "anim_sad.h"
 #include "anim_swear.h"
 #include "anim_sleep.h"
+#include "anim_joy.h"
+
 #include "config.h"
 
 namespace AnimManager {
@@ -19,6 +21,8 @@ namespace AnimManager {
         AnimSad::init(tft);
         AnimSwear::init(tft);
         AnimSleep::init(tft);
+        AnimJoy::init(tft);
+
 
         // Стартуем с IDLE
         AnimIdle::reset();
@@ -37,6 +41,7 @@ namespace AnimManager {
             case AnimType::SAD:   return "SAD";
             case AnimType::SWEAR: return "SWEAR";
             case AnimType::SLEEP: return "SLEEP";
+            case AnimType::JOY:   return "JOY";
             default:              return "UNKNOWN";
         }
     }
@@ -47,6 +52,7 @@ namespace AnimManager {
 
         switch (currentAnim) {
             case AnimType::IDLE:  AnimIdle::reset();  break;
+            case AnimType::JOY:   AnimJoy::reset();   break;
             case AnimType::ANGER: AnimAnger::reset(); break;
             case AnimType::DIZZY: AnimDizzy::reset(); break;
             case AnimType::SAD:   AnimSad::reset();   break;
@@ -58,6 +64,7 @@ namespace AnimManager {
     void nextState() {
         switch (currentAnim) {
             case AnimType::IDLE:  setAnimation(AnimType::ANGER); break;
+            case AnimType::JOY:   setAnimation(AnimType::ANGER); break;
             case AnimType::ANGER: setAnimation(AnimType::DIZZY); break;
             case AnimType::DIZZY: setAnimation(AnimType::SAD);   break;
             case AnimType::SAD:   setAnimation(AnimType::SWEAR); break;
@@ -73,6 +80,9 @@ namespace AnimManager {
         switch (currentAnim) {
             case AnimType::IDLE:
                 AnimIdle::runStep(tft, sprite);
+                break;
+            case AnimType::JOY:
+                AnimJoy::runStep(tft, sprite);
                 break;
             case AnimType::ANGER:
                 AnimAnger::runStep(tft, sprite);
