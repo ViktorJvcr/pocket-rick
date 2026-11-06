@@ -1,6 +1,8 @@
 #include "animation/anim_swear.h"
 #include "face_state.h"
 #include <math.h>
+#include "sensors/imu_sensor.h"
+
 
 namespace AnimSwear {
 
@@ -628,6 +630,20 @@ void runStep(TFT_eSPI &tft, TFT_eSprite &sprite) {
             isBlinking = false;
         }
     }
+
+    // === ПАРАЛЛАКС: наклон брелка ===
+    // Коэффициент 0.35 по X и 0.25 по Y (чтобы плашка цензуры и значки ругани не вылетали за экран)
+    float imuX = ImuSensor::getParallaxX() * 0.35f;
+    float imuY = ImuSensor::getParallaxY() * 0.25f;
+
+    // Защитные границы хода лица
+    if (imuX < -14.0f) imuX = -14.0f;
+    if (imuX >  14.0f) imuX =  14.0f;
+    if (imuY <  -8.0f) imuY =  -8.0f;
+    if (imuY >   8.0f) imuY =   8.0f;
+
+    t_cx += imuX;
+    t_cy += imuY;
 
     // Асимптотическая пружина
     const float speed = 0.20f;

@@ -1,6 +1,7 @@
 #include "anim_anger.h"
 #include "face_state.h"
 #include <math.h>
+#include "sensors/imu_sensor.h"
 
 namespace AnimAnger {
 
@@ -193,9 +194,22 @@ void runStep(TFT_eSPI &tft, TFT_eSprite &sprite) {
     colorGlow1 = FaceState::current.colorGlow1;
     colorGlow2 = FaceState::current.colorGlow2;
 
-    // 1. Дыхание и волна ярости
+    // 1. Дыхание и целевые координаты с умеренным параллаксом
     float breath = sin(elapsed * 6.0f); 
-    t_cy = BASE_Y + breath * 4.0f;
+
+    // Смягченный параллакс (чтобы маска бровей не наползала на глаза)
+    float imuX = ImuSensor::getParallaxX() * 0.35f;
+    float imuY = ImuSensor::getParallaxY() * 0.25f;
+
+    // Защитные границы хода лица
+    if (imuX < -14.0f) imuX = -14.0f;
+    if (imuX >  14.0f) imuX =  14.0f;
+    if (imuY <  -8.0f) imuY =  -8.0f;
+    if (imuY >   8.0f) imuY =   8.0f;
+
+    t_cx = CENTER_X + imuX;
+    t_cy = BASE_Y + breath * 3.0f + imuY;
+
     float rageWave = (sin(elapsed * 2.5f) + 1.0f) * 0.5f; 
     
     // Нервный тик правого глаза
@@ -206,7 +220,7 @@ void runStep(TFT_eSPI &tft, TFT_eSprite &sprite) {
         }
     }
 
-    // 2. Пружинная физика
+    // 2. Пружинная физика (плавный догон целевых координат)
     const float speed = 0.20f;
     cx += (t_cx - cx) * speed;
     cy += (t_cy - cy) * speed;
@@ -219,9 +233,10 @@ void runStep(TFT_eSPI &tft, TFT_eSprite &sprite) {
     mh += (t_mh - mh) * speed;
     browOffset += (t_browOffset - browOffset) * 0.15f;
 
-    // Сохраняем геометрию в общее состояние
+    // Сохраняем геометрию в общее состояние лица
     FaceState::saveGeometry(cx, cy, currentSpacing, lw, rw, lh, rh, mw, mh);
 
+    // Случайная микротряска при пике ярости
     int shakeX = 0, shakeY = 0;
     if (rageWave > 0.6f) {
         shakeX = random(-2, 3);
@@ -233,38 +248,40 @@ void runStep(TFT_eSPI &tft, TFT_eSprite &sprite) {
     float lx = cur_cx - currentSpacing / 2.0f;
     float rx = cur_cx + currentSpacing / 2.0f;
 
-    // 3. Отрисовка
+    // 3. Отрисовка кадра
     sprite.fillSprite(TFT_BLACK);
 
     updateSparks();
     drawSparks(sprite);
 
     int eyeRadius = 16;
-    if (eyeRadius > lw / 2) eyeRadius = lw / 2;
-    if (eyeRadius > lh / 2) eyeRadius = lh / 2;
+    if (eyeRadius > (int)(lw / 2.0f)) eyeRadius = (int)(lw / 2.0f);
+    if (eyeRadius > (int)(lh / 2.0f)) eyeRadius = (int)(lh / 2.0f);
 
-    drawGlowingRoundRect(sprite, lx - lw/2, cur_cy - lh/2, lw, lh, eyeRadius);
-    drawGlowingRoundRect(sprite, rx - rw/2, cur_cy - rh/2, rw, rh, eyeRadius);
+    // Базовые глаза со свечением
+    drawGlowingRoundRect(sprite, (int)(lx - lw/2.0f), (int)(cur_cy - lh/2.0f), (int)lw, (int)lh, eyeRadius);
+    drawGlowingRoundRect(sprite, (int)(rx - rw/2.0f), (int)(cur_cy - rh/2.0f), (int)rw, (int)rh, eyeRadius);
 
-    // Пламя в глазах рисуем, когда глаза уже достаточно открылись после моргания
+    // Огненные языки внутри глаз
     if (lh > 24.0f) {
         drawEyeFlames(sprite, lx, cur_cy, lw, lh, elapsed, 0);
         drawEyeFlames(sprite, rx, cur_cy, rw, rh, elapsed, 10);
     }
 
-    // "Маска злости"
-    int l_topY = cur_cy - lh/2 - 8 + browOffset;
+    // Срезающая "маска злости"
+    int l_topY = (int)(cur_cy - lh/2.0f - 8.0f + browOffset);
     sprite.fillTriangle(
-        lx - lw/2 - 10, l_topY - 15,
-        lx + lw/2 + 10, l_topY - 15,
-        lx + lw/2 + 10, l_topY + 28,
+        (int)(lx - lw/2.0f - 10.0f), l_topY - 15,
+        (int)(lx + lw/2.0f + 10.0f), l_topY - 15,
+        (int)(lx + lw/2.0f + 10.0f), l_topY + 28,
         TFT_BLACK
     );
-    int r_topY = cur_cy - rh/2 - 8 + browOffset;
+
+    int r_topY = (int)(cur_cy - rh/2.0f - 8.0f + browOffset);
     sprite.fillTriangle(
-        rx - rw/2 - 10, r_topY - 15,
-        rx + rw/2 + 10, r_topY - 15,
-        rx - rw/2 - 10, r_topY + 28,
+        (int)(rx - rw/2.0f - 10.0f), r_topY - 15,
+        (int)(rx + rw/2.0f + 10.0f), r_topY - 15,
+        (int)(rx - rw/2.0f - 10.0f), r_topY + 28,
         TFT_BLACK
     );
 
@@ -275,18 +292,18 @@ void runStep(TFT_eSPI &tft, TFT_eSprite &sprite) {
         int rad = (layer == 0) ? 7 : (layer == 1 ? 5 : 3);
 
         for (int i = 0; i <= browSteps; i++) {
-            float t = (float)i / browSteps;
-            float blx = (lx - lw/2 - 4) + t * (lw + 8);
-            float bly = (l_topY + 2) + t * 22.0f;
+            float t = (float)i / (float)browSteps;
+            float blx = (lx - lw/2.0f - 4.0f) + t * (lw + 8.0f);
+            float bly = (l_topY + 2.0f) + t * 22.0f;
             sprite.fillCircle((int)blx, (int)bly, rad, col);
 
-            float brx = (rx + rw/2 + 4) - t * (rw + 8);
-            float bry = (r_topY + 2) + t * 22.0f;
+            float brx = (rx + rw/2.0f + 4.0f) - t * (rw + 8.0f);
+            float bry = (r_topY + 2.0f) + t * 22.0f;
             sprite.fillCircle((int)brx, (int)bry, rad, col);
         }
     }
 
-    // Рот (Рычащий зигзаг)
+    // Рычащий зигзагообразный рот
     float mouthY = cur_cy + 46.0f;
     int mSteps = 20;
     for (int layer = 0; layer < 3; layer++) {
@@ -294,21 +311,22 @@ void runStep(TFT_eSPI &tft, TFT_eSprite &sprite) {
         int rad = (layer == 0) ? 6 : (layer == 1 ? 4 : 2);
 
         for (int i = 0; i <= mSteps; i++) {
-            float t = (float)i / mSteps;
+            float t = (float)i / (float)mSteps;
             float normX = (t - 0.5f) * 2.0f;
             float mx = cur_cx + normX * (mw / 2.0f);
             float arch = (normX * normX) * (mh * 0.6f); 
-            float teeth = sin(t * 3.14159f * 4.0f) * 2.5f;
+            float teeth = sinf(t * 3.14159f * 4.0f) * 2.5f;
             float my = mouthY + arch + teeth;
 
             sprite.fillCircle((int)mx, (int)my, rad, col);
         }
     }
 
-    // Значок злости 💢
+    // Значок вздувшейся вены 💢 справа сверху от лица
     float veinScale = 0.8f + (breath + 1.0f) * 0.25f;
-    drawVeinSymbol(sprite, rx + 34, cur_cy - 48, veinScale);
+    drawVeinSymbol(sprite, (int)(rx + 34.0f), (int)(cur_cy - 48.0f), veinScale);
 
+    // Вывод буфера на дисплей со смещением 40 пикселей сверху
     sprite.pushSprite(0, 40);
 }
 

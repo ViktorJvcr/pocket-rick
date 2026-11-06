@@ -1,6 +1,8 @@
 #include "anim_sad.h"
 #include "face_state.h"
 #include <math.h>
+#include "sensors/imu_sensor.h"
+
 
 namespace AnimSad {
 namespace {
@@ -369,6 +371,21 @@ void runStep(TFT_eSPI &tft, TFT_eSprite &sprite) {
     }
 
     t_cx = CENTER_X + cos(now * 0.0012f) * 3.0f;
+    // === ПАРАЛЛАКС: учитываем наклон брелка ===
+    // Для грусти берем мягкий коэффициент 0.4 по X и 0.25 по Y (взгляд тяжелый, медленный)
+    float imuX = ImuSensor::getParallaxX() * 0.40f;
+    float imuY = ImuSensor::getParallaxY() * 0.25f;
+
+    // Безопасные границы, чтобы слезы и свечение не срезались рамкой экрана
+    if (imuX < -16.0f) imuX = -16.0f;
+    if (imuX >  16.0f) imuX =  16.0f;
+    if (imuY <  -8.0f) imuY =  -8.0f;
+    if (imuY >   8.0f) imuY =   8.0f;
+
+    t_cx += imuX;
+    t_cy += imuY;
+    // ==========================================
+
 
     // 2. ЛОГИКА МЕДЛЕННОГО МОРГАНИЯ
     if (!isBlinking && (now - lastBlinkTime > nextBlinkDelay)) {
@@ -391,7 +408,7 @@ void runStep(TFT_eSPI &tft, TFT_eSprite &sprite) {
     float moveSpeed = (sighPhase == 1) ? 0.04f : 0.12f;
     cx += (t_cx - cx) * moveSpeed;
     cy += (t_cy - cy) * moveSpeed;
-    currentSpacing += (t_spacing - currentSpacing) * 0.12f;
+
 
     float eyeMorphSpeed = isBlinking ? 0.25f : 0.14f;
     lw += (t_lw - lw) * eyeMorphSpeed;
