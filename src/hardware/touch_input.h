@@ -3,19 +3,35 @@
 #include "pins.h"
 
 namespace TouchInput {
-    // Первые 400 мс после init() все касания игнорируются (UART0 пины 20/21)
-    constexpr unsigned long ARM_DELAY_MS = 400;
-    // Время подавления дребезга контактов
-    constexpr unsigned long DEBOUNCE_DELAY_MS = 40;
+    // Временные пороги (мс)
+    constexpr unsigned long ARM_DELAY_MS       = 400;  // Защита от помех UART0 при старте
+    constexpr unsigned long DEBOUNCE_DELAY_MS  = 35;   // Антидребезг
+    constexpr unsigned long DOUBLE_CLICK_MS    = 280;  // Окно ожидания второго клика
+    constexpr unsigned long HOLD_DELAY_MS      = 800;  // Одиночное удержание
+    constexpr unsigned long BOTH_HOLD_DELAY_MS = 1500; // Удержание обеих кнопок (сервисное меню)
 
     void init();
     void update();
 
-    // Одиночные клики (возвращают true ровно один раз за касание)
-    bool isMidPressed();
-    bool isRightPressed();
+    // Одиночные клики
+    bool isMidClicked();
+    bool isRightClicked();
 
-    // Текущее состояние (удержание кнопки)
+    // Двойные клики
+    bool isMidDoubleClicked();
+    bool isRightDoubleClicked();
+
+    // Удержания
+    bool isMidHold();
+    bool isRightHold();
+    bool isBothHold();
+
+    // Текущие состояния
     bool isMidDown();
     bool isRightDown();
+    bool isBothDown();
+
+    // Совместимость
+    inline bool isMidPressed()   { return isMidClicked(); }
+    inline bool isRightPressed() { return isRightClicked(); }
 }
