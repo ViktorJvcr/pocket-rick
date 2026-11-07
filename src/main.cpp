@@ -3,323 +3,327 @@
 #include "pins.h"
 #include "animation/anim_manager.h"
 #include "animation/anim_wink.h"
-#include "animation/anim_disdain.h"
 #include "animation/anim_lookat.h"
+#include "animation/anim_disdain.h"
+#include "animation/anim_melt.h"
+#include "animation/face_state.h"
 #include "hardware/touch_input.h"
 #include "sensors/imu_sensor.h"
 #include "sensors/tap_detector.h"
+#include "sensors/orientation.h"
 
-// ----------------------------------------------------------------------------
-// Дисплей и единый экранный буфер (240x200, 16-bit RGB565)
-// ----------------------------------------------------------------------------
-TFT_eSPI    tft    = TFT_eSPI();
+// ============================================================================
+//  Глобальные объекты (единственный буфер кадра 240x200 на весь проект)
+// ============================================================================
+TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite sprite = TFT_eSprite(&tft);
 
-namespace {
-    // ------------------------------------------------------------------------
-    // Временные константы и тайминги
-    // ------------------------------------------------------------------------
-    const uint32_t TARGET_FRAME_MS   = 16;     // ~60 FPS для анимаций
-    const uint32_t SERVICE_FRAME_MS  = 125;    // ~8 FPS для сервисного дашборда
+// ============================================================================
+//  Настройки поведения и таймингов
+// ============================================================================
+const uint32_t TARGET_FRAME_MS      = 16;     // ~60 FPS
+const uint32_t SERVICE_FRAME_MS     = 125;    // ~8 FPS в сервисном меню
 
-    const uint32_t JOY_START_MS      = 300;    // порог удержания для радости (поглаживание)
-    const uint32_t ANGER_START_MS    = 4500;   // порог удержания для срыва в ярость
-    const uint32_t ANGER_HOLD_MS     = 3000;   // ярость после отпускания кнопки
-    const uint32_t LAUGH_DURATION_MS = 1800;   // длительность смеха от щекотки
-    const uint32_t SWEAR_DURATION_MS = 2600;   // длительность ругани (5 стуков)
-    const uint32_t CLICK_IGNORE_MS   = 500;    // окно подавления ложного клика после жеста
-    const uint32_t DEBUG_ANIM_MS     = 3000;   // авто-возврат в IDLE при ручном переборе реакций
+const uint32_t LAUGH_DURATION_MS    = 1800;   // хохот от щекотки
+const uint32_t JOY_HOLD_MS          = 300;    // порог удержания для непрерывного поглаживания
+const uint32_t JOY_TAP_MS           = 2000;   // длительность радости от быстрого тапа
+const uint32_t ANGER_HOLD_MS        = 4500;   // порог срыва в ярость при долгом зажатии
+const uint32_t ANGER_RELEASE_MS     = 3000;   // ярость держится ещё 3 с после отпускания
+const uint32_t LOOK_DURATION_MS     = 1350;   // взгляд в точку удара
+const uint32_t DISDAIN_DURATION_MS  = 2800;   // презрение при 3 стуках
+const uint32_t SWEAR_DURATION_MS    = 2600;   // ругань при 5 стуках
 
-    // ------------------------------------------------------------------------
-    // Состояние системы и таймеры
-    // ------------------------------------------------------------------------
-    bool     inServiceMenu         = false;
-    bool     bothHoldLatched       = false;
-    uint32_t lastFrameMs           = 0;
-    uint32_t lastServiceMs         = 0;
+// «Вверх тормашками»
+const uint32_t UPSIDE_DOWN_DELAY_MS = 1800;   // столько непрерывно вверх ногами -> MELT
+const uint32_t MELT_MIN_SHOW_MS     = 600;    // минимальное время показа до восстановления
 
-    bool     rightWasDown          = false;
-    uint32_t rightPressStart       = 0;
-    bool     joyActivated          = false;
-    bool     angerActive           = false;
+// ============================================================================
+//  Состояние главного цикла
+// ============================================================================
+bool     inServiceMenu   = false;
+bool     bothHoldLatch   = false;
+uint32_t lastFrameMs     = 0;
+uint32_t lastServiceMs   = 0;
 
-    uint32_t angerHoldUntil        = 0;
-    uint32_t laughUntil            = 0;
-    uint32_t swearUntil            = 0;
-    uint32_t debugAnimUntil        = 0;
-    uint32_t ignoreRightClickUntil = 0;
+uint32_t autoReturnAt    = 0;     // таймер авто-возврата в IDLE
+uint32_t rightDownStart  = 0;     // момент нажатия правой кнопки (0 — не нажата)
+bool     angerLatched    = false;
+uint32_t angerReleaseAt  = 0;
+uint32_t meltStartMs     = 0;
 
-    uint32_t fpsCounter            = 0;
-    uint32_t fpsLastMs             = 0;
-    uint32_t fpsValue              = 0;
+// FPS
+uint32_t fpsCounter = 0, fpsLastMs = 0, fpsValue = 0;
 
-    // Вспомогательная проверка истечения таймера
-    bool timerExpired(uint32_t &until, uint32_t now) {
-        if (until != 0 && (int32_t)(now - until) >= 0) {
-            until = 0;
-            return true;
+// ============================================================================
+//  Вспомогательные функции переключения состояний
+// ============================================================================
+void goIdle() {
+    AnimManager::setAnimation(AnimType::IDLE);
+    autoReturnAt   = 0;
+    angerLatched   = false;
+    angerReleaseAt = 0;
+}
+
+void startTimed(AnimType anim, uint32_t durationMs, uint32_t now) {
+    AnimManager::setAnimation(anim);
+    autoReturnAt = now + durationMs;
+}
+
+// ============================================================================
+//  «Вверх тормашками» (Orientation -> MELT)
+// ============================================================================
+void handleUpsideDown(uint32_t now) {
+    if (!Orientation::isReady()) return;
+
+    AnimType cur = AnimManager::getCurrentAnim();
+    bool down = Orientation::isUpsideDown();
+
+    if (cur != AnimType::MELT) {
+        // Перевёрнут непрерывно дольше порога -> стекаем в лужу
+        if (down && Orientation::getUpsideDownMs() >= UPSIDE_DOWN_DELAY_MS) {
+            AnimMelt::setSideTilt(Orientation::getSideTilt());
+            AnimManager::setAnimation(AnimType::MELT);
+            meltStartMs    = now;
+            autoReturnAt   = 0;
+            angerLatched   = false;
+            angerReleaseAt = 0;
+            rightDownStart = 0;
         }
-        return false;
+        return;
     }
 
-    // ------------------------------------------------------------------------
-    // Обработка стуков по корпусу (IMU Jerk Detector)
-    // ------------------------------------------------------------------------
-    void handleTaps(uint32_t now) {
-        if (!TapDetector::consumeTap()) return;
+    // Если уже в луже — она следует за боковым наклоном
+    AnimMelt::setSideTilt(Orientation::getSideTilt());
 
-        AnimType cur = AnimManager::getCurrentAnim();
-
-        // Во время активных эмоциональных сцен стуки не прерывают действие
-        bool busy = (cur == AnimType::JOY   || cur == AnimType::ANGER ||
-                     cur == AnimType::LAUGH || cur == AnimType::SWEAR ||
-                     cur == AnimType::WINK  || cur == AnimType::DIZZY ||
-                     cur == AnimType::SAD);
-        if (busy) return;
-
-        int   combo = TapDetector::getComboCount();
-        float dirX  = TapDetector::getTapDirX();
-        float dirY  = TapDetector::getTapDirY();
-
-        Serial.printf("[TAP] #%d dir=(%.2f, %.2f) jerk=%.2fg\n",
-                      combo, dirX, dirY, TapDetector::getLastJerk());
-
-        // 5 стуков подряд -> Срыв в ругань (SWEAR)
-        if (combo >= 5) {
-            AnimManager::setAnimation(AnimType::SWEAR);
-            swearUntil = now + SWEAR_DURATION_MS;
-            debugAnimUntil = 0;
-            return;
-        }
-
-        // Если робот уже презирает -> повторный стук вызывает недоуменное покачивание
-        if (cur == AnimType::DISDAIN) {
-            AnimDisdain::setTapSide(dirX);
-            AnimDisdain::nudge();
-            return;
-        }
-
-        // 3 стука подряд -> Анимация презрения (DISDAIN)
-        if (combo >= 3) {
-            AnimDisdain::setTapSide(dirX);
-            AnimManager::setAnimation(AnimType::DISDAIN);
-            debugAnimUntil = 0;
-            return;
-        }
-
-        // 1-2 стука -> Взгляд в точку удара с сильным удивлением (LOOK)
-        AnimLookAt::setTarget(dirX, dirY);
-        AnimManager::setAnimation(AnimType::LOOK);
-        debugAnimUntil = 0;
+    // Вернули в нормальное положение -> собираемся обратно
+    if (!down && !AnimMelt::isRecovering() && !AnimMelt::isFinished()
+        && (now - meltStartMs >= MELT_MIN_SHOW_MS)) {
+        AnimMelt::startRecovery();
     }
 
-    // ------------------------------------------------------------------------
-    // Обработка сенсорных кнопок и жестов
-    // ------------------------------------------------------------------------
-    void handleInputs(uint32_t now) {
-        // 1. Щекотка (поочередное быстрое касание обеих кнопок)
-        if (TouchInput::isTickleDetected()) {
-            if (AnimManager::getCurrentAnim() != AnimType::LAUGH) {
-                AnimManager::setAnimation(AnimType::LAUGH);
-            }
-            laughUntil     = now + LAUGH_DURATION_MS;
-            debugAnimUntil = 0;
+    // Восстановление завершено -> спокойный режим IDLE
+    if (AnimMelt::isFinished()) {
+        goIdle();
+    }
+}
+
+// ============================================================================
+//  Жесты стука по корпусу (TapDetector: 1, 3, 5 стуков)
+// ============================================================================
+void handleTapGestures(uint32_t now) {
+    if (!TapDetector::consumeTap()) return;
+
+    AnimType cur = AnimManager::getCurrentAnim();
+    // Не прерываем активные сюжетные состояния
+    if (cur == AnimType::ANGER || cur == AnimType::JOY ||
+        cur == AnimType::LAUGH || cur == AnimType::MELT) return;
+
+    int combo = TapDetector::getComboCount();
+    float dirX = TapDetector::getTapDirX();
+    float dirY = TapDetector::getTapDirY();
+
+    // 5 стуков: ругань с плашкой цензуры
+    if (combo >= 5) {
+        startTimed(AnimType::SWEAR, SWEAR_DURATION_MS, now);
+        return;
+    }
+
+    // Если уже в презрении — повторный стук вызывает недоуменное покачивание
+    if (cur == AnimType::DISDAIN) {
+        AnimDisdain::setTapSide(dirX);
+        AnimDisdain::nudge();
+        return;
+    }
+
+    // 3 стука: презрение со стороны удара
+    if (combo >= 3) {
+        AnimDisdain::setTapSide(dirX);
+        startTimed(AnimType::DISDAIN, DISDAIN_DURATION_MS, now);
+        return;
+    }
+
+    // 1-2 стука: удивлённый взгляд в точку удара
+    AnimLookAt::setTarget(dirX, dirY);
+    startTimed(AnimType::LOOK, LOOK_DURATION_MS, now);
+}
+
+// ============================================================================
+//  Сенсорные кнопки
+// ============================================================================
+void handleTouch(uint32_t now) {
+    AnimType cur = AnimManager::getCurrentAnim();
+
+    // 1. Щекотка
+    if (TouchInput::isTickleDetected() && cur != AnimType::ANGER) {
+        startTimed(AnimType::LAUGH, LAUGH_DURATION_MS, now);
+        TouchInput::isRightClicked(); // поглощаем возможный клик
+        return;
+    }
+
+    // 2. Удержание правой кнопки: JOY -> ANGER
+    if (TouchInput::isRightDown()) {
+        if (rightDownStart == 0) rightDownStart = now;
+        uint32_t held = now - rightDownStart;
+
+        if (held >= ANGER_HOLD_MS && !angerLatched) {
+            angerLatched = true;
+            angerReleaseAt = 0;
+            autoReturnAt = 0;
+            AnimManager::setAnimation(AnimType::ANGER);
+            cur = AnimType::ANGER;
+        } else if (held >= JOY_HOLD_MS && !angerLatched
+                   && cur != AnimType::JOY && cur != AnimType::LAUGH) {
+            autoReturnAt = 0;
+            AnimManager::setAnimation(AnimType::JOY);
+            cur = AnimType::JOY;
         }
+    } else {
+        if (rightDownStart != 0) {
+            uint32_t held = now - rightDownStart;
+            rightDownStart = 0;
 
-        // 2. Правая кнопка: поглаживание (JOY) -> ярость (ANGER)
-        bool rightDown = TouchInput::isRightDown();
-        if (rightDown) {
-            if (!rightWasDown) {
-                rightWasDown    = true;
-                rightPressStart = now;
-                joyActivated    = false;
-            }
-            uint32_t held = now - rightPressStart;
-            AnimType cur  = AnimManager::getCurrentAnim();
-
-            if (held >= ANGER_START_MS) {
-                if (cur != AnimType::ANGER) {
-                    AnimManager::setAnimation(AnimType::ANGER);
+            if (angerLatched && cur == AnimType::ANGER) {
+                angerReleaseAt = now; // ярость держится ещё ANGER_RELEASE_MS
+            } else if (cur == AnimType::JOY) {
+                // Если держали дольше порога — гасим сразу при отпускании
+                if (held >= JOY_HOLD_MS) {
+                    goIdle();
+                    cur = AnimType::IDLE;
                 }
-                angerActive    = true;
-                debugAnimUntil = 0;
-            } else if (held >= JOY_START_MS) {
-                joyActivated = true;
-                if (cur != AnimType::JOY && cur != AnimType::LAUGH && !angerActive) {
-                    AnimManager::setAnimation(AnimType::JOY);
-                }
-                debugAnimUntil = 0;
-            }
-        } else if (rightWasDown) {
-            // Отпускание правой кнопки
-            rightWasDown = false;
-
-            if (angerActive) {
-                angerActive           = false;
-                angerHoldUntil        = now + ANGER_HOLD_MS;
-                ignoreRightClickUntil = now + CLICK_IGNORE_MS; // глушим случайный клик после долгого удержания
-            } else if (joyActivated) {
-                if (AnimManager::getCurrentAnim() == AnimType::JOY) {
-                    AnimManager::setAnimation(AnimType::IDLE);
-                }
-                ignoreRightClickUntil = now + CLICK_IGNORE_MS; // глушим клик после поглаживания, чтобы JOY не залипала
-            }
-            joyActivated = false;
-        }
-
-        // 3. Центральная кнопка: подмигивание (WINK)
-        if (TouchInput::isMidClicked()) {
-            if (!angerActive && AnimManager::getCurrentAnim() != AnimType::ANGER) {
-                AnimManager::setAnimation(AnimType::WINK);
-                debugAnimUntil = 0;
-            }
-        }
-
-        // 4. Таймеры автоматического возврата в IDLE
-        if (timerExpired(angerHoldUntil, now)) {
-            if (AnimManager::getCurrentAnim() == AnimType::ANGER) {
-                AnimManager::setAnimation(AnimType::IDLE);
-            }
-        }
-        if (timerExpired(laughUntil, now)) {
-            if (AnimManager::getCurrentAnim() == AnimType::LAUGH) {
-                AnimManager::setAnimation(AnimType::IDLE);
-            }
-        }
-        if (timerExpired(swearUntil, now)) {
-            if (AnimManager::getCurrentAnim() == AnimType::SWEAR) {
-                AnimManager::setAnimation(AnimType::IDLE);
-            }
-        }
-        if (timerExpired(debugAnimUntil, now)) {
-            AnimType cur = AnimManager::getCurrentAnim();
-            if (cur == AnimType::JOY || cur == AnimType::LAUGH || cur == AnimType::WINK) {
-                AnimManager::setAnimation(AnimType::IDLE);
-            }
-        }
-
-        // Авто-возврат по завершению сюжетных анимаций
-        AnimType curAnim = AnimManager::getCurrentAnim();
-        if (curAnim == AnimType::WINK && AnimWink::isFinished()) {
-            AnimManager::setAnimation(AnimType::IDLE);
-        } else if (curAnim == AnimType::DISDAIN && AnimDisdain::isFinished()) {
-            AnimManager::setAnimation(AnimType::IDLE);
-        } else if (curAnim == AnimType::LOOK && AnimLookAt::isFinished()) {
-            AnimManager::setAnimation(AnimType::IDLE);
-        }
-
-        // 5. Отладочный перебор анимаций (короткий одиночный клик правой кнопкой)
-        bool rightClicked = TouchInput::isRightClicked();
-        bool clickAllowed = (int32_t)(now - ignoreRightClickUntil) >= 0;
-
-        if (rightClicked && clickAllowed && !rightDown && !angerActive) {
-            AnimManager::nextState();
-            AnimType cur = AnimManager::getCurrentAnim();
-            Serial.printf("[DEBUG] nextState -> %s\n", AnimManager::getAnimName(cur));
-
-            // Для коротких эмоциональных реакций ставим таймер, чтобы они не зависали
-            if (cur == AnimType::JOY || cur == AnimType::LAUGH || cur == AnimType::WINK) {
-                debugAnimUntil = now + DEBUG_ANIM_MS;
-            } else {
-                debugAnimUntil = 0;
             }
         }
     }
 
-    // ------------------------------------------------------------------------
-    // Сервисный дашборд
-    // ------------------------------------------------------------------------
-    void drawServiceDashboard(uint32_t now) {
-        char line[48];
-
-        sprite.fillSprite(TFT_BLACK);
-        sprite.setTextDatum(TL_DATUM);
-        sprite.setTextFont(2);
-
-        sprite.setTextColor(TFT_CYAN, TFT_BLACK);
-        sprite.drawString("SERVICE MODE (hold both to exit)", 8, 4);
-
-        sprite.setTextColor(TFT_GREEN, TFT_BLACK);
-        uint32_t sec = now / 1000;
-        snprintf(line, sizeof(line), "Uptime: %02lu:%02lu:%02lu",
-                 (unsigned long)(sec / 3600), (unsigned long)((sec / 60) % 60), (unsigned long)(sec % 60));
-        sprite.drawString(line, 8, 26);
-
-        snprintf(line, sizeof(line), "Free heap: %lu B", (unsigned long)ESP.getFreeHeap());
-        sprite.drawString(line, 8, 44);
-
-        snprintf(line, sizeof(line), "FPS: %lu", (unsigned long)fpsValue);
-        sprite.drawString(line, 8, 62);
-
-        snprintf(line, sizeof(line), "IMU: %s", ImuSensor::isReady() ? "ONLINE" : "OFFLINE");
-        sprite.drawString(line, 8, 80);
-
-        snprintf(line, sizeof(line), "Parallax X: %.1f  Y: %.1f",
-                 ImuSensor::getParallaxX(), ImuSensor::getParallaxY());
-        sprite.drawString(line, 8, 98);
-
-        snprintf(line, sizeof(line), "Tap: %s  combo: %d",
-                 TapDetector::isReady() ? "ONLINE" : "OFFLINE", TapDetector::getComboCount());
-        sprite.drawString(line, 8, 116);
-
-        snprintf(line, sizeof(line), "Tap jerk: %.2fg",
-                 TapDetector::getLastJerk());
-        sprite.drawString(line, 8, 134);
-
-        snprintf(line, sizeof(line), "Anim: %s", AnimManager::getAnimName(AnimManager::getCurrentAnim()));
-        sprite.drawString(line, 8, 152);
-
-        sprite.pushSprite(0, 40);
+    // Завершение ярости по таймеру после отпускания кнопки
+    if (angerLatched && angerReleaseAt != 0 && (now - angerReleaseAt >= ANGER_RELEASE_MS)) {
+        goIdle();
+        cur = AnimType::IDLE;
     }
 
-    void countFrame(uint32_t now) {
-        fpsCounter++;
-        if (now - fpsLastMs >= 1000) {
-            fpsValue   = fpsCounter;
-            fpsCounter = 0;
-            fpsLastMs  = now;
+    // 3. Быстрый одиночный клик правой кнопки — короткая радость на 2 с
+    if (TouchInput::isRightClicked() && rightDownStart == 0) {
+        if (cur == AnimType::IDLE) {
+            startTimed(AnimType::JOY, JOY_TAP_MS, now);
+            cur = AnimType::JOY;
         }
     }
-} // anonymous namespace
 
-// ----------------------------------------------------------------------------
-// Инициализация
-// ----------------------------------------------------------------------------
+    // 4. Двойной клик правой кнопки — безопасный отладочный перебор анимаций
+    if (TouchInput::isRightDoubleClicked() && rightDownStart == 0) {
+        AnimManager::nextState();
+        autoReturnAt = 0;
+        cur = AnimManager::getCurrentAnim();
+        Serial.printf("[DEBUG] nextState -> %s\n", AnimManager::getAnimName(cur));
+    }
+
+    // 5. Клик центральной кнопки: подмигивание
+    if (TouchInput::isMidClicked() && cur == AnimType::IDLE) {
+        AnimManager::setAnimation(AnimType::WINK);
+        autoReturnAt = 0;
+        cur = AnimType::WINK;
+    }
+    if (cur == AnimType::WINK && AnimWink::isFinished()) {
+        goIdle();
+        cur = AnimType::IDLE;
+    }
+}
+
+// ============================================================================
+//  Сервисный дашборд (рисуется в тот же sprite)
+// ============================================================================
+void drawServiceMenu(uint32_t now) {
+    char buf[48];
+    sprite.fillSprite(TFT_BLACK);
+    sprite.setTextDatum(TL_DATUM);
+
+    sprite.setTextColor(TFT_CYAN, TFT_BLACK);
+    sprite.setTextSize(2);
+    sprite.drawString("SERVICE", 6, 4, 1);
+
+    sprite.setTextSize(1);
+    sprite.setTextColor(TFT_WHITE, TFT_BLACK);
+    int y = 28;
+    const int dy = 12;
+
+    snprintf(buf, sizeof(buf), "Uptime: %lu s", (unsigned long)(now / 1000));
+    sprite.drawString(buf, 6, y, 1); y += dy;
+
+    snprintf(buf, sizeof(buf), "Heap: %lu B", (unsigned long)ESP.getFreeHeap());
+    sprite.drawString(buf, 6, y, 1); y += dy;
+
+    snprintf(buf, sizeof(buf), "FPS: %lu", (unsigned long)fpsValue);
+    sprite.drawString(buf, 6, y, 1); y += dy;
+
+    snprintf(buf, sizeof(buf), "IMU: %s", ImuSensor::isReady() ? "ONLINE" : "OFFLINE");
+    sprite.drawString(buf, 6, y, 1); y += dy;
+
+    snprintf(buf, sizeof(buf), "Parallax X:%6.2f Y:%6.2f",
+             ImuSensor::getParallaxX(), ImuSensor::getParallaxY());
+    sprite.drawString(buf, 6, y, 1); y += dy;
+
+    snprintf(buf, sizeof(buf), "Tap jerk: %5.2f g", TapDetector::getLastJerk());
+    sprite.drawString(buf, 6, y, 1); y += dy;
+
+    // --- Ориентация ---
+    sprite.setTextColor(TFT_GREENYELLOW, TFT_BLACK);
+    float gx, gy, gz;
+    Orientation::getGravity(gx, gy, gz);
+    snprintf(buf, sizeof(buf), "G: %5.2f %5.2f %5.2f", gx, gy, gz);
+    sprite.drawString(buf, 6, y, 1); y += dy;
+
+    snprintf(buf, sizeof(buf), "UpDot: %5.2f  Side: %5.2f",
+             Orientation::getUpDot(), Orientation::getSideTilt());
+    sprite.drawString(buf, 6, y, 1); y += dy;
+
+    snprintf(buf, sizeof(buf), "UpsideDown: %s  %lu ms",
+             Orientation::isUpsideDown() ? "YES" : "no",
+             (unsigned long)Orientation::getUpsideDownMs());
+    sprite.drawString(buf, 6, y, 1); y += dy;
+
+    sprite.setTextColor(TFT_WHITE, TFT_BLACK);
+    snprintf(buf, sizeof(buf), "Anim: %s", AnimManager::getAnimName(AnimManager::getCurrentAnim()));
+    sprite.drawString(buf, 6, y, 1); y += dy;
+
+    sprite.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    sprite.drawString("Hold both buttons to exit", 6, 186, 1);
+
+    sprite.pushSprite(0, 40);
+}
+
+// ============================================================================
+//  setup / loop
+// ============================================================================
 void setup() {
     Serial.begin(115200);
-    delay(50);
+    delay(200);
+    Serial.println("\n[BOOT] AIBI keychain robot");
 
-    // Включаем подсветку экрана
     pinMode(TFT_BL_PIN, OUTPUT);
-    digitalWrite(TFT_BL_PIN, HIGH);
+    digitalWrite(TFT_BL_PIN, LOW);
 
-    // Инициализация ST7789
     tft.init();
     tft.setRotation(0);
     tft.fillScreen(TFT_BLACK);
 
-    // Выделение единственного буфера 240x200
     sprite.setColorDepth(16);
     sprite.createSprite(240, 200);
     sprite.fillSprite(TFT_BLACK);
 
-    // Сенсоры и аппаратная часть
     TouchInput::init();
     ImuSensor::init();
-    TapDetector::init(); // Обязательно после ImuSensor::init()
+    TapDetector::init();
+    Orientation::init(); // строго после ImuSensor::init()
 
-    // Диспетчер анимаций
     AnimManager::init(tft);
     AnimManager::setAnimation(AnimType::IDLE);
 
+    digitalWrite(TFT_BL_PIN, HIGH);
+
     lastFrameMs = millis();
     fpsLastMs   = lastFrameMs;
-    Serial.println("[MAIN] Robot ready");
+    Serial.println("[BOOT] ready");
 }
 
-// ----------------------------------------------------------------------------
-// Главный цикл
-// ----------------------------------------------------------------------------
 void loop() {
     uint32_t now = millis();
 
@@ -327,43 +331,59 @@ void loop() {
     TouchInput::update();
     ImuSensor::update();
     TapDetector::update();
+    Orientation::update();
 
-    // 2. Вход/выход из сервисного меню (зажаты обе кнопки > 1.5 с)
-    if (TouchInput::isBothHold()) {
-        if (!bothHoldLatched) {
-            bothHoldLatched = true;
-            inServiceMenu   = !inServiceMenu;
-            if (!inServiceMenu) {
-                AnimManager::setAnimation(AnimType::IDLE);
-            }
-            Serial.printf("[MAIN] service menu: %s\n", inServiceMenu ? "ON" : "OFF");
-        }
-    } else {
-        bothHoldLatched = false;
+    // 2. Сервисное меню (удержание обеих кнопок > 1.5 с)
+    bool both = TouchInput::isBothHold();
+    if (both && !bothHoldLatch) {
+        bothHoldLatch = true;
+        inServiceMenu = !inServiceMenu;
+        if (!inServiceMenu) goIdle();
+        Serial.printf("[MODE] service menu %s\n", inServiceMenu ? "ON" : "OFF");
     }
+    if (!both) bothHoldLatch = false;
 
-    // Отрисовка сервисного экрана
     if (inServiceMenu) {
         if (now - lastServiceMs >= SERVICE_FRAME_MS) {
             lastServiceMs = now;
-            drawServiceDashboard(now);
-            countFrame(now);
+            drawServiceMenu(now);
+            fpsCounter++;
         }
-        vTaskDelay(1);
-        return;
+    } else {
+        // 3. Рабочий режим
+        handleUpsideDown(now);
+
+        bool melting = (AnimManager::getCurrentAnim() == AnimType::MELT);
+        if (!melting) {
+            handleTapGestures(now);
+            handleTouch(now);
+
+            // Авто-возврат по таймеру (JOY / LAUGH / LOOK / DISDAIN / SWEAR)
+            if (autoReturnAt != 0 && now >= autoReturnAt) {
+                AnimType cur = AnimManager::getCurrentAnim();
+                if (cur == AnimType::JOY || cur == AnimType::LAUGH ||
+                    cur == AnimType::LOOK || cur == AnimType::DISDAIN ||
+                    cur == AnimType::SWEAR) {
+                    goIdle();
+                }
+                autoReturnAt = 0;
+            }
+        }
+
+        // 4. Отрисовка кадра (~60 FPS)
+        if (now - lastFrameMs >= TARGET_FRAME_MS) {
+            lastFrameMs = now;
+            AnimManager::runCurrentAnimation(tft, sprite);
+            fpsCounter++;
+        }
     }
 
-    // 3. Обработка стуков и жестов
-    handleTaps(now);
-    handleInputs(now);
-
-    // 4. Отрисовка кадра анимации (~60 FPS)
-    if (now - lastFrameMs >= TARGET_FRAME_MS) {
-        lastFrameMs = now;
-        AnimManager::runCurrentAnimation(tft, sprite);
-        countFrame(now);
+    // Расчет FPS раз в секунду
+    if (now - fpsLastMs >= 1000) {
+        fpsLastMs = now;
+        fpsValue = fpsCounter;
+        fpsCounter = 0;
     }
 
-    // Системная пауза для фоновых задач RTOS и watchdog
     vTaskDelay(1);
 }
