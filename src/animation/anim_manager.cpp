@@ -38,9 +38,9 @@ void init(TFT_eSPI &tft) {
     AnimIdle::reset();
 }
 
-void setAnimation(AnimType newAnim) {
-    // При переходе в MELT или LOOK резкий рефлекторный прищур отключаем
-    FaceState::prepareTransition(newAnim != AnimType::MELT && newAnim != AnimType::LOOK);
+void setAnimation(AnimType newAnim, bool blink) {
+    // Если blink == false (например, бесшовный переход сон -> ярость), рефлекторный прищур отключается
+    FaceState::prepareTransition(blink);
     currentAnim = newAnim;
 
     switch (currentAnim) {

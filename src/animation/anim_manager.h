@@ -19,7 +19,7 @@ enum class AnimType {
 namespace AnimManager {
     void init(TFT_eSPI &tft);
     void runCurrentAnimation(TFT_eSPI &tft, TFT_eSprite &sprite);
-    void setAnimation(AnimType newAnim);
+    void setAnimation(AnimType newAnim, bool blink = true); // <-- здесь добавлен аргумент со значением по умолчанию
     void nextState();
     const char* getAnimName(AnimType anim);
     AnimType getCurrentAnim();
