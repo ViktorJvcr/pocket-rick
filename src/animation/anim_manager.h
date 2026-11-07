@@ -9,7 +9,8 @@ enum class AnimType {
     DIZZY,
     SAD,
     SWEAR,
-    SLEEP
+    SLEEP,
+    WINK    // 8. Подмигивание при клике
 };
 
 namespace AnimManager {

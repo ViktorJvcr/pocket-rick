@@ -8,6 +8,8 @@
 #include "anim_sleep.h"
 #include "anim_joy.h"
 #include "anim_laugh.h"
+#include "anim_wink.h"
+
 
 
 #include "config.h"
@@ -25,6 +27,7 @@ namespace AnimManager {
         AnimSleep::init(tft);
         AnimJoy::init(tft);
         AnimLaugh::init(tft);
+        AnimWink::init(tft);
 
 
 
@@ -64,6 +67,7 @@ namespace AnimManager {
             case AnimType::SAD:   AnimSad::reset();   break;
             case AnimType::SWEAR: AnimSwear::reset(); break;
             case AnimType::SLEEP: AnimSleep::reset(); break;
+            case AnimType::WINK: AnimWink::reset(); break;
         }
     }
 
@@ -108,6 +112,10 @@ namespace AnimManager {
             case AnimType::SLEEP:
                 AnimSleep::runStep(tft, sprite);
                 break;
+            case AnimType::WINK: 
+                AnimWink::runStep(tft, sprite); 
+                break;
+
         }
     }
 }

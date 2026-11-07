@@ -1,262 +1,548 @@
 #include <Arduino.h>
 #include <TFT_eSPI.h>
-#include "config.h"
+
+#include <esp_timer.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+
+#include <cstdio>
+
 #include "pins.h"
-#include "display/display.h"
-#include "animation/anim_manager.h"
 #include "hardware/touch_input.h"
 #include "sensors/imu_sensor.h"
+#include "animation/face_state.h"
+#include "animation/anim_manager.h"
+#include "animation/anim_wink.h"
 
-// -------------------------------------------------------------
-// 1. Глобальные объекты и переменные
-// -------------------------------------------------------------
-TFT_eSPI tft = TFT_eSPI();
-TFT_eSprite sprite = TFT_eSprite(&tft);
+TFT_eSPI tft;
+TFT_eSprite sprite(&tft);
 
-// Переменные для расчета и ограничения FPS
-unsigned long lastFpsPrint = 0;
-uint32_t frameCount = 0;
-float currentFpsValue = 0.0f;
-constexpr unsigned long TARGET_FRAME_MS = 16; // Стремимся к 60 FPS
+namespace {
 
-// Флаг сервисного меню
+// -----------------------------------------------------------------------------
+// Настройки
+// -----------------------------------------------------------------------------
+
+constexpr int16_t SPRITE_WIDTH  = 240;
+constexpr int16_t SPRITE_HEIGHT = 200;
+
+constexpr uint32_t TARGET_FRAME_MS       = 16;
+constexpr uint32_t SERVICE_UI_INTERVAL_MS = 125;  // 8 Гц
+
+constexpr uint32_t STROKE_START_MS = 300;
+constexpr uint32_t OVERLOAD_MS     = 4500;
+constexpr uint32_t LAUGH_DURATION_MS = 1800;
+constexpr uint32_t ANGER_HOLD_MS     = 3000;
+
+// Порог > 1500 мс и стартовая блокировка 400 мс реализованы в TouchInput.
 bool inServiceMenu = false;
+bool bothHoldLatched = false;
+bool inputBlockedUntilRelease = false;
 
-// -------------------------------------------------------------
-// 2. Отрисовка сервисного экрана диагностики
-// -------------------------------------------------------------
-void drawServiceMenu(TFT_eSprite &spr) {
-    spr.fillSprite(TFT_BLACK);
+// -----------------------------------------------------------------------------
+// Кадрирование и реальный FPS
+// -----------------------------------------------------------------------------
 
-    // Рамка меню
-    spr.drawRoundRect(4, 4, 232, 192, 6, TFT_DARKGREY);
-    spr.drawRoundRect(6, 6, 228, 188, 4, TFT_NAVY);
+uint32_t lastFrameStartedAt = 0;
+uint32_t fpsWindowStartedAt = 0;
+uint32_t framesInWindow = 0;
+float realFps = 0.0f;
 
-    // Заголовок
-    spr.setTextDatum(TC_DATUM);
-    spr.setTextColor(TFT_YELLOW, TFT_BLACK);
-    spr.drawString("=== SERVICE MENU ===", 120, 14, 2);
+// -----------------------------------------------------------------------------
+// Состояние жестов
+// -----------------------------------------------------------------------------
 
-    spr.setTextDatum(TL_DATUM);
-    spr.setTextColor(TFT_WHITE, TFT_BLACK);
-    int y = 42;
-    int lineH = 18;
+enum class Reaction : uint8_t {
+    NONE,
+    STROKE,
+    LAUGH,
+    OVERLOAD,
+    ANGER_HOLD
+};
 
-    // Время работы с включения
-    unsigned long sec = millis() / 1000;
-    unsigned int m = (sec / 60) % 60;
-    unsigned int h = (sec / 3600);
-    unsigned int s = sec % 60;
-    spr.drawString(" Uptime:       " + String(h < 10 ? "0" : "") + h + ":" + (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s, 14, y);
-    y += lineH;
+Reaction reaction = Reaction::NONE;
 
-    // Свободная память RAM
-    uint32_t freeHeap = ESP.getFreeHeap() / 1024;
-    uint32_t maxBlock = ESP.getMaxAllocHeap() / 1024;
-    spr.drawString(" Free RAM:     " + String(freeHeap) + " KB (blk " + String(maxBlock) + "k)", 14, y);
-    y += lineH;
+bool rightWasDown = false;
+bool rightClickEligible = false;
+bool midClickEligible = false;
 
-    // Частота кадров
-    spr.drawString(" Render FPS:   " + String(currentFpsValue, 1), 14, y);
-    y += lineH;
+uint32_t rightPressStartTime = 0;
+uint32_t laughUntil = 0;
+uint32_t angerHoldUntil = 0;
 
-    // Статус датчика движения
-    bool imuOk = ImuSensor::isReady();
-    spr.drawString(" IMU (BMI160): ", 14, y);
-    if (imuOk) {
-        spr.setTextColor(TFT_GREEN, TFT_BLACK);
-        spr.drawString("ONLINE", 130, y);
-    } else {
-        spr.setTextColor(TFT_RED, TFT_BLACK);
-        spr.drawString("OFFLINE", 130, y);
-    }
-    spr.setTextColor(TFT_WHITE, TFT_BLACK);
-    y += lineH;
+struct InputSnapshot {
+    bool rightDown;
+    bool midPhysicalDown;
+    bool rightPhysicalDown;
 
-    // Углы параллакса
-    spr.drawString(" Parallax:     X:" + String(ImuSensor::getParallaxX(), 0) + "  Y:" + String(ImuSensor::getParallaxY(), 0), 14, y);
-    y += lineH;
+    bool bothHold;
+    bool tickle;
+    bool midClicked;
+    bool rightClicked;
+};
 
-    // Текущая анимация
-    spr.drawString(" Current Anim: " + String(AnimManager::getAnimName(AnimManager::getCurrentAnim())), 14, y);
-    y += lineH + 6;
+// -----------------------------------------------------------------------------
+// Время и общие вспомогательные функции
+// -----------------------------------------------------------------------------
 
-    // Подсказка выхода
-    spr.setTextDatum(BC_DATUM);
-    spr.setTextColor(TFT_CYAN, TFT_BLACK);
-    spr.drawString("Tap any button to EXIT", 120, 185, 2);
-
-    spr.pushSprite(0, 40);
+// Корректно работает при переполнении millis() для наших коротких интервалов.
+bool deadlineReached(uint32_t now, uint32_t deadline) {
+    return static_cast<int32_t>(now - deadline) >= 0;
 }
 
-// -------------------------------------------------------------
-// 3. Инициализация при включении (setup)
-// -------------------------------------------------------------
+void selectAnimation(AnimType animation) {
+    // Не перезапускаем reset() анимации на каждой итерации удержания.
+    if (AnimManager::getCurrentAnim() != animation) {
+        AnimManager::setAnimation(animation);
+    }
+}
+
+void resetGestureState() {
+    reaction = Reaction::NONE;
+
+    rightWasDown = false;
+    rightClickEligible = false;
+    midClickEligible = false;
+
+    rightPressStartTime = 0;
+    laughUntil = 0;
+    angerHoldUntil = 0;
+}
+
+void resetFpsCounter(uint32_t now) {
+    fpsWindowStartedAt = now;
+    framesInWindow = 0;
+    realFps = 0.0f;
+}
+
+void updateFpsCounter(uint32_t now) {
+    const uint32_t elapsed = now - fpsWindowStartedAt;
+
+    if (elapsed < 1000U) {
+        return;
+    }
+
+    // Используем фактическую продолжительность окна, а не предполагаемые 1000 мс.
+    realFps = static_cast<float>(framesInWindow) * 1000.0f
+            / static_cast<float>(elapsed);
+
+    framesInWindow = 0;
+    fpsWindowStartedAt = now;
+}
+
+bool allButtonsReleased(const InputSnapshot& input) {
+    return !input.midPhysicalDown
+        && !input.rightPhysicalDown
+        && !input.rightDown;
+}
+
+InputSnapshot readInputs() {
+    InputSnapshot input{};
+
+    input.rightDown = TouchInput::isRightDown();
+
+    // Сырые уровни нужны только для контроля полного отпускания кнопок
+    // и защиты от отложенных кликов после сервисного удержания.
+    // Распознавание жестов остаётся задачей TouchInput.
+    input.midPhysicalDown = digitalRead(TOUCH_MID_PIN) == HIGH;
+    input.rightPhysicalDown = digitalRead(TOUCH_RIGHT_PIN) == HIGH;
+
+    // Читаем каждое событие ровно один раз за итерацию, в том числе
+    // в сервисном меню: события не должны накапливаться на выход.
+    input.bothHold = TouchInput::isBothHold();
+    input.tickle = TouchInput::isTickleDetected();
+    input.midClicked = TouchInput::isMidClicked();
+    input.rightClicked = TouchInput::isRightClicked();
+
+    return input;
+}
+
+// -----------------------------------------------------------------------------
+// Сервисный экран
+// -----------------------------------------------------------------------------
+
+
+
+void drawServiceStaticUi() {
+    // Полная очистка выполняется только при входе в меню.
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextWrap(false);
+    tft.setTextFont(1);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextSize(2);
+    tft.setTextColor(TFT_CYAN, TFT_BLACK);
+
+    tft.drawString("SERVICE DASHBOARD", 120, 18, 1);
+    tft.drawFastHLine(8, 36, 224, TFT_DARKGREY);
+
+    tft.setTextSize(1);
+    tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    tft.drawString("Hold BOTH >1.5s to exit", 120, 251, 1);
+
+    tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    tft.drawString("ESP32-C3 / ST7789 / BMI160", 120, 268, 1);
+
+    tft.setTextDatum(TL_DATUM);
+}
+
+void drawServiceDashboard() {
+    // Переиспользуем лицевой буфер: дополнительный спрайт и дополнительные
+    // 96 КБ памяти не нужны. Сначала собираем UI в RAM, затем выводим целиком.
+    sprite.fillSprite(TFT_BLACK);
+    sprite.setTextWrap(false);
+    sprite.setTextFont(1);
+    sprite.setTextDatum(TL_DATUM);
+    sprite.setTextSize(2);
+    sprite.setTextColor(TFT_WHITE, TFT_BLACK);
+
+    char text[80];
+
+    // 64-битный uptime не обнуляется при переполнении millis().
+    const uint64_t uptimeSeconds =
+        static_cast<uint64_t>(esp_timer_get_time()) / 1000000ULL;
+
+    const unsigned long long minutes =
+        static_cast<unsigned long long>(uptimeSeconds / 60ULL);
+
+    const unsigned long long seconds =
+        static_cast<unsigned long long>(uptimeSeconds % 60ULL);
+
+    std::snprintf(
+        text, sizeof(text), "Up %llum %02llus", minutes, seconds
+    );
+    sprite.drawString(text, 8, 6, 1);
+
+    const float freeHeapKb =
+        static_cast<float>(ESP.getFreeHeap()) / 1024.0f;
+
+    std::snprintf(
+        text, sizeof(text), "Heap %.1f KB",
+        static_cast<double>(freeHeapKb)
+    );
+    sprite.drawString(text, 8, 30, 1);
+
+    std::snprintf(
+        text, sizeof(text), "FPS %.1f",
+        static_cast<double>(realFps)
+    );
+    sprite.drawString(text, 8, 54, 1);
+
+    sprite.drawString("IMU", 8, 78, 1);
+
+    const bool imuReady = ImuSensor::isReady();
+
+    sprite.setTextColor(
+        imuReady ? TFT_GREEN : TFT_RED, TFT_BLACK
+    );
+    sprite.drawString(
+        imuReady ? "ONLINE" : "OFFLINE", 68, 78, 1
+    );
+
+    sprite.setTextSize(1);
+    sprite.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+
+    std::snprintf(
+        text,
+        sizeof(text),
+        "Parallax X:%+.2f  Y:%+.2f",
+        static_cast<double>(ImuSensor::getParallaxX()),
+        static_cast<double>(ImuSensor::getParallaxY())
+    );
+    sprite.drawString(text, 8, 106, 1);
+
+    sprite.drawFastHLine(8, 120, 224, TFT_DARKGREY);
+
+    
+
+    // Возвращаем нейтральные настройки текста для последующих анимаций.
+    sprite.setTextSize(1);
+    sprite.setTextColor(TFT_WHITE, TFT_BLACK);
+
+    sprite.pushSprite(0, 40);
+}
+
+// -----------------------------------------------------------------------------
+// Переключение сервисного режима
+// -----------------------------------------------------------------------------
+
+void toggleServiceMenu() {
+    inServiceMenu = !inServiceMenu;
+
+    resetGestureState();
+    inputBlockedUntilRelease = true;
+    selectAnimation(AnimType::IDLE);
+
+    if (inServiceMenu) {
+        drawServiceStaticUi();
+    } else {
+        // Убираем заголовок и подвал сервисного режима.
+        tft.fillScreen(TFT_BLACK);
+
+        sprite.fillSprite(TFT_BLACK);
+        sprite.setTextFont(1);
+        sprite.setTextSize(1);
+        sprite.setTextDatum(TL_DATUM);
+        sprite.setTextColor(TFT_WHITE, TFT_BLACK);
+    }
+
+    const uint32_t now = millis();
+    resetFpsCounter(now);
+
+    // Первый кадр нового режима разрешён немедленно.
+    lastFrameStartedAt = now - (
+        inServiceMenu ? SERVICE_UI_INTERVAL_MS : TARGET_FRAME_MS
+    );
+}
+
+void handleServiceToggle(const InputSnapshot& input) {
+    // Поддерживает и импульсное событие isBothHold(), и длительный true.
+    // Повторный вход/выход разрешаем только после отпускания обеих кнопок.
+    if (allButtonsReleased(input) && !input.bothHold) {
+        bothHoldLatched = false;
+    }
+
+    if (input.bothHold && !bothHoldLatched) {
+        bothHoldLatched = true;
+        toggleServiceMenu();
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Жесты рабочего режима
+// -----------------------------------------------------------------------------
+
+void handleWorkGestures(const InputSnapshot& input, uint32_t now) {
+    if (inputBlockedUntilRelease) {
+        if (allButtonsReleased(input)) {
+            inputBlockedUntilRelease = false;
+        }
+
+        // Не обрабатываем события отпускания сервисного удержания.
+        return;
+    }
+
+    // Разрешаем центральный клик только после нажатия, увиденного
+    // в рабочем режиме. Отложенный клик из сервисного меню игнорируется.
+    if (input.midPhysicalDown) {
+        midClickEligible = true;
+    }
+
+    const bool midClick = input.midClicked && midClickEligible;
+
+    if (input.midClicked) {
+        midClickEligible = false;
+    }
+
+    // Начало удержания правой кнопки.
+    if (input.rightDown && !rightWasDown) {
+        rightPressStartTime = now;
+        rightClickEligible = false;
+    }
+
+    // Отпускание правой кнопки.
+    if (!input.rightDown && rightWasDown) {
+        const uint32_t heldMs = now - rightPressStartTime;
+
+        // Проверяем длительность также на отпускании: порог мог быть
+        // пересечён непосредственно во время передачи предыдущего кадра.
+        const bool releasedAfterOverload =
+            reaction == Reaction::OVERLOAD ||
+            (heldMs >= OVERLOAD_MS && reaction != Reaction::ANGER_HOLD);
+
+        if (releasedAfterOverload) {
+            reaction = Reaction::ANGER_HOLD;
+            angerHoldUntil = now + ANGER_HOLD_MS;
+            rightClickEligible = false;
+            selectAnimation(AnimType::ANGER);
+        } else if (reaction == Reaction::STROKE) {
+            reaction = Reaction::NONE;
+            rightClickEligible = false;
+            selectAnimation(AnimType::IDLE);
+        } else {
+            // Удержание от 300 мс уже является поглаживанием,
+            // а не отладочным одиночным кликом.
+            rightClickEligible =
+                heldMs < STROKE_START_MS &&
+                reaction == Reaction::NONE;
+        }
+    }
+
+    rightWasDown = input.rightDown;
+
+    const uint32_t heldMs =
+        input.rightDown ? now - rightPressStartTime : 0U;
+
+    if (input.rightDown && heldMs >= STROKE_START_MS) {
+        rightClickEligible = false;
+    }
+
+    const bool rightClick =
+        input.rightClicked && rightClickEligible;
+
+    if (input.rightClicked) {
+        rightClickEligible = false;
+    }
+
+    // Приоритет:
+    // 1. Перегрузка и её трёхсекундное последействие.
+    // 2. Щекотка.
+    // 3. Поглаживание.
+    // 4. Одиночные клики.
+
+    if (reaction == Reaction::ANGER_HOLD) {
+        if (deadlineReached(now, angerHoldUntil)) {
+            reaction = Reaction::NONE;
+            selectAnimation(AnimType::IDLE);
+        }
+        return;
+    }
+
+    if (input.rightDown && heldMs >= OVERLOAD_MS) {
+        reaction = Reaction::OVERLOAD;
+        selectAnimation(AnimType::ANGER);
+        return;
+    }
+
+    if (input.tickle) {
+        reaction = Reaction::LAUGH;
+        laughUntil = now + LAUGH_DURATION_MS;
+        rightClickEligible = false;
+        selectAnimation(AnimType::LAUGH);
+    }
+
+    if (reaction == Reaction::LAUGH) {
+        if (deadlineReached(now, laughUntil)) {
+            reaction = Reaction::NONE;
+            selectAnimation(AnimType::IDLE);
+        }
+        return;
+    }
+
+    if (input.rightDown && heldMs >= STROKE_START_MS) {
+        reaction = Reaction::STROKE;
+        selectAnimation(AnimType::JOY);
+        return;
+    }
+
+    if (midClick) {
+        rightClickEligible = false;
+        AnimManager::setAnimation(AnimType::WINK);
+    } else if (rightClick) {
+        AnimManager::nextState();
+    }
+
+    if (AnimManager::getCurrentAnim() == AnimType::WINK &&
+        AnimWink::isFinished()) {
+        selectAnimation(AnimType::IDLE);
+    }
+}
+
+} // namespace
+
+// -----------------------------------------------------------------------------
+// Arduino setup
+// -----------------------------------------------------------------------------
+
 void setup() {
-    Serial.begin(115200);
-    delay(1000); 
-    Serial.println(">>> СТАРТ РОБОТА: ПОГЛАЖИВАНИЕ + ЩЕКОТКА + СЕРВИСНОЕ МЕНЮ <<<");
+    pinMode(TFT_BL_PIN, OUTPUT);
+
+    // Не подсвечиваем неинициализированную матрицу.
+    digitalWrite(TFT_BL_PIN, LOW);
+
+    // Пины SPI, ST7789, 240x280, CGRAM_OFFSET и частота шины
+    // должны быть настроены в конфигурации TFT_eSPI.
+    tft.init();
+    tft.setRotation(0);
+    tft.invertDisplay(true);
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextWrap(false);
+
+    sprite.setColorDepth(16);
+
+    if (sprite.createSprite(SPRITE_WIDTH, SPRITE_HEIGHT) == nullptr) {
+        tft.setTextFont(1);
+        tft.setTextDatum(TL_DATUM);
+        tft.setTextSize(1);
+        tft.setTextColor(TFT_RED, TFT_BLACK);
+        tft.drawString("SPRITE ALLOCATION FAILED", 12, 90, 1);
+
+        tft.setTextColor(TFT_WHITE, TFT_BLACK);
+        tft.drawString("Need 96000 contiguous bytes", 12, 112, 1);
+        tft.drawString("Check heap usage and restart", 12, 130, 1);
+
+        digitalWrite(TFT_BL_PIN, HIGH);
+
+        // Аварийное состояние: нельзя запускать анимации без буфера.
+        // Отдаём процессор системным задачам, не создавая busy-loop.
+        for (;;) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+        }
+    }
+
+    sprite.fillSprite(TFT_BLACK);
+    sprite.setTextWrap(false);
 
     TouchInput::init();
-    initDisplay(tft, sprite);
-    AnimManager::init(tft);
     ImuSensor::init();
 
-    Serial.printf("Стартовая эмоция: %s\n", AnimManager::getAnimName(AnimManager::getCurrentAnim()));
-    Serial.println("Управление:");
-    Serial.println(" - Быстрое чередование кнопок -> Щекотка (LAUGH)");
-    Serial.println(" - Удержание правой кнопки -> Поглаживание (JOY)");
-    Serial.println(" - Зажатие обеих кнопок 1.5 сек -> Сервисное меню");
-    Serial.println(" - Одиночный клик -> Переключение следующей эмоции");
+    // AnimManager инициализирует анимации и управляет FaceState.
+    // Повторно обновлять палитру FaceState из main.cpp не требуется.
+    AnimManager::init(tft);
+    AnimManager::setAnimation(AnimType::IDLE);
 
-    lastFpsPrint = millis();
+    resetGestureState();
+
+    const uint32_t now = millis();
+    resetFpsCounter(now);
+    lastFrameStartedAt = now - TARGET_FRAME_MS;
+
+    digitalWrite(TFT_BL_PIN, HIGH);
 }
 
-// -------------------------------------------------------------
-// 4. Главный рабочий цикл (loop)
-// -------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// Arduino loop
+// -----------------------------------------------------------------------------
+
 void loop() {
-    // 1. Опрашиваем сенсоры кнопок
+    // Ввод и батарея обслуживаются независимо от частоты отрисовки.
     TouchInput::update();
 
-    // 2. Проверяем вход в сервисное меню (обе кнопки зажаты 1.5 сек)
-    if (TouchInput::isBothHold()) {
-        inServiceMenu = !inServiceMenu;
-        Serial.printf("[SYSTEM] Сервисное меню: %s\n", inServiceMenu ? "ОТКРЫТО" : "ЗАКРЫТО");
+    const InputSnapshot input = readInputs();
+
+    handleServiceToggle(input);
+
+    if (!inServiceMenu) {
+        handleWorkGestures(input, millis());
     }
 
-    // Если сейчас открыто сервисное меню:
-    if (inServiceMenu) {
-        // Одиночный клик любой кнопки закрывает меню
-        if (TouchInput::isRightClicked() || TouchInput::isMidClicked()) {
-            inServiceMenu = false;
-            Serial.println("[SYSTEM] Выход из сервисного меню к роботу");
-        }
-        drawServiceMenu(sprite);
-    } 
-    // Если меню закрыто — работает живой робот:
-    else {
-        static unsigned long petHoldStart = 0;       // Засекает время поглаживания
-        static unsigned long angerCooldownStart = 0; // Время остывания после злости
-        static unsigned long tickleUntilTime = 0;    // До какого момента робот смеётся от щекотки
+    // IMU продолжает обновляться и в сервисном режиме.
+    ImuSensor::update();
 
-        // -----------------------------------------------------
-        // А) ЩЕКОТКА (быстрое поочередное нажатие кнопок)
-        // -----------------------------------------------------
-        if (TouchInput::isTickleDetected()) {
-            tickleUntilTime = millis() + 1800; // Робот хохочет 1.8 секунды после последнего тапа
-            if (AnimManager::getCurrentAnim() != AnimType::LAUGH && 
-                AnimManager::getCurrentAnim() != AnimType::ANGER) {
-                AnimManager::setAnimation(AnimType::LAUGH);
-                Serial.println("[ROBOT] Ахаха, щекотно! -> Включен LAUGH XD");
-            }
+    const uint32_t now = millis();
+    const uint32_t frameInterval =
+        inServiceMenu ? SERVICE_UI_INTERVAL_MS : TARGET_FRAME_MS;
+
+    // Неблокирующее кадрирование: не ждём окончания интервала в цикле.
+    // При медленном кадре пропускаем потерянное время, не рисуем
+    // серию догоняющих кадров.
+    if (now - lastFrameStartedAt >= frameInterval) {
+        lastFrameStartedAt = now;
+
+        if (inServiceMenu) {
+            drawServiceDashboard();
+        } else {
+            // По контракту проекта runStep() каждой анимации уже вызывает
+            // sprite.pushSprite(0, 40). Второй push здесь не нужен.
+            AnimManager::runCurrentAnimation(tft, sprite);
         }
 
-        // Если время щекотки истекло — возвращаемся обратно в спокойный IDLE
-        if (tickleUntilTime != 0 && millis() >= tickleUntilTime) {
-            tickleUntilTime = 0;
-            if (AnimManager::getCurrentAnim() == AnimType::LAUGH) {
-                AnimManager::setAnimation(AnimType::IDLE);
-                Serial.println("[ROBOT] Щекотка окончена -> Возврат в IDLE");
-            }
-        }
-
-        // -----------------------------------------------------
-        // Б) ПОГЛАЖИВАНИЕ (удержание правой кнопки GPIO 21)
-        // -----------------------------------------------------
-        // Работает только если робота сейчас не щекочут
-        if (TouchInput::isRightDown() && tickleUntilTime == 0) {
-            if (petHoldStart == 0) {
-                petHoldStart = millis(); // Засекаем старт касания
-            }
-
-            unsigned long holdTime = millis() - petHoldStart;
-
-            // Касание от 300 мс до 4.5 сек -> Робот радуется (JOY)
-            if (holdTime > 300 && holdTime < 4500) {
-                if (AnimManager::getCurrentAnim() != AnimType::JOY && 
-                    AnimManager::getCurrentAnim() != AnimType::ANGER) {
-                    AnimManager::setAnimation(AnimType::JOY);
-                    Serial.println("[ROBOT] Робота гладят -> Включен JOY ^^");
-                }
-            } 
-            // Передержали ласку дольше 4.5 сек -> Срыв в ярость (ANGER)
-            else if (holdTime >= 4500) {
-                if (AnimManager::getCurrentAnim() != AnimType::ANGER) {
-                    AnimManager::setAnimation(AnimType::ANGER);
-                    Serial.println("[ROBOT] Перегрузка лаской -> Срыв в ANGER!");
-                }
-            }
-        } 
-        // Палец с правой кнопки убрали:
-        else {
-            if (petHoldStart != 0) {
-                // Если робот просто радовался — сразу возвращаем в IDLE
-                if (AnimManager::getCurrentAnim() == AnimType::JOY && tickleUntilTime == 0) {
-                    AnimManager::setAnimation(AnimType::IDLE);
-                    Serial.println("[ROBOT] Поглаживание окончено -> IDLE");
-                } 
-                // Если робот был зол — запускаем таймер остывания на 3 секунды
-                else if (AnimManager::getCurrentAnim() == AnimType::ANGER) {
-                    angerCooldownStart = millis();
-                    Serial.println("[ROBOT] Палец убран: робот злится еще 3 секунды...");
-                }
-                petHoldStart = 0;
-            }
-
-            // Автоматическое успокоение после злости (через 3 секунды)
-            if (angerCooldownStart != 0 && (millis() - angerCooldownStart >= 3000)) {
-                if (AnimManager::getCurrentAnim() == AnimType::ANGER) {
-                    AnimManager::setAnimation(AnimType::IDLE);
-                    Serial.println("[ROBOT] Робот остыл и успокоился -> IDLE");
-                }
-                angerCooldownStart = 0;
-            }
-
-            // Короткий клик правой кнопки (GPIO 21) листает анимацию для тестов
-            if (TouchInput::isRightClicked() && tickleUntilTime == 0) {
-                angerCooldownStart = 0;
-                AnimManager::nextState();
-                Serial.printf("[TOUCH GPIO 21] Клик -> %s\n", 
-                              AnimManager::getAnimName(AnimManager::getCurrentAnim()));
-            }
-        }
-
-        // -----------------------------------------------------
-        // В) ЦЕНТРАЛЬНАЯ КНОПКА (GPIO 20)
-        // -----------------------------------------------------
-        // Короткий клик центральной кнопки также листает анимации
-        if (TouchInput::isMidClicked() && tickleUntilTime == 0) {
-            AnimManager::nextState();
-            Serial.printf("[TOUCH GPIO 20] Клик -> %s\n", 
-                          AnimManager::getAnimName(AnimManager::getCurrentAnim()));
-        }
-
-        // -----------------------------------------------------
-        // Г) ДАТЧИК IMU И ОТРИСОВКА
-        // -----------------------------------------------------
-        // Считываем параллакс от наклона
-        ImuSensor::update();
-
-        // Рисуем текущую активную анимацию
-        AnimManager::runCurrentAnimation(tft, sprite);
+        // Считаем реально выполненные кадры, а не итерации loop().
+        ++framesInWindow;
     }
 
-    // ---------------------------------------------------------
-    // 5. Замер FPS и ограничение кадров (до 60 FPS)
-    // ---------------------------------------------------------
-    frameCount++;
-    unsigned long now = millis();
-    if (now - lastFpsPrint >= 1000) {
-        currentFpsValue = (frameCount * 1000.0f) / (now - lastFpsPrint);
-        frameCount = 0;
-        lastFpsPrint = now;
-    }
+    updateFpsCounter(millis());
 
-    unsigned long renderElapsed = millis() - now;
-    if (renderElapsed < TARGET_FRAME_MS) {
-        delay(1);
-    } else {
-        yield();
-    }
+    // Один системный тик для USB, планировщика и watchdog.
+    // Это не задержка на 16 мс: срок следующего кадра проверяется выше.
+    vTaskDelay(1);
 }
