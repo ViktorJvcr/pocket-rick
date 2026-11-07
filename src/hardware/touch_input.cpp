@@ -7,6 +7,13 @@ namespace {
     bool bothDownActive = false;
     bool eventBothHold = false;
 
+    // Переменные для детекции щекотки (чередование кнопок)
+    int lastTappedBtn = 0;          // 1 = Mid (GPIO 20), 2 = Right (GPIO 21)
+    unsigned long lastTapTime = 0;
+    int tickleStreak = 0;
+    bool eventTickle = false;
+    constexpr unsigned long TICKLE_MAX_INTERVAL_MS = 450; // Максимальная пауза между тапами
+
     enum BtnState {
         STATE_IDLE,
         STATE_DEBOUNCE,
@@ -102,6 +109,33 @@ void update() {
     processButton(btnMid, now);
     processButton(btnRight, now);
 
+        // --- Детекция щекотки (быстрое чередование левой и правой кнопки) ---
+    bool midHit = (btnMid.rawState && btnMid.state == STATE_PRESSED && btnMid.stateChangeTime == now);
+    bool rightHit = (btnRight.rawState && btnRight.state == STATE_PRESSED && btnRight.stateChangeTime == now);
+
+    if (midHit || rightHit) {
+        int currentHit = midHit ? 1 : 2;
+
+        if (lastTappedBtn != 0 && currentHit != lastTappedBtn && (now - lastTapTime <= TICKLE_MAX_INTERVAL_MS)) {
+            // Кнопка сменилась вовремя -> увеличиваем серию
+            tickleStreak++;
+            if (tickleStreak >= 3) { // 3 успешных чередования подряд
+                eventTickle = true;
+            }
+        } else {
+            // Слишком долго ждали или нажали ту же кнопку дважды -> сброс серии
+            tickleStreak = 1;
+        }
+
+        lastTappedBtn = currentHit;
+        lastTapTime = now;
+    } else if (now - lastTapTime > TICKLE_MAX_INTERVAL_MS) {
+        // Время вышло — серия сбрасывается
+        tickleStreak = 0;
+        lastTappedBtn = 0;
+    }
+
+
     // Логика зажатия обеих кнопок
     if (btnMid.rawState && btnRight.rawState) {
         if (!bothDownActive) {
@@ -189,6 +223,14 @@ bool isRightDown() {
 
 bool isBothDown() {
     return btnMid.rawState && btnRight.rawState;
+}
+
+bool isTickleDetected() {
+    if (eventTickle) {
+        eventTickle = false;
+        return true;
+    }
+    return false;
 }
 
 } // namespace TouchInput

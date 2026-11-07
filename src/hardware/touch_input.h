@@ -25,6 +25,7 @@ namespace TouchInput {
     bool isMidHold();
     bool isRightHold();
     bool isBothHold();
+    bool isTickleDetected();      // Сработало быстрое поочередное нажатие (щекотка)
 
     // Текущие состояния
     bool isMidDown();
