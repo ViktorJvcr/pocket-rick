@@ -59,6 +59,7 @@ namespace {
     uint32_t rightDownStart        = 0;      // момент нажатия правой кнопки (0 = отпущена)
     bool     angerLatched          = false;  // срыв в ярость зафиксирован
     uint32_t meltStartMs           = 0;
+    uint32_t meltCooldownUntil     = 0;      // защита от сна во время и после сборки лужи
     uint32_t lastActivityTime      = 0;      // время последнего действия/жеста
 
     // Метрики FPS и статистика
@@ -81,7 +82,7 @@ namespace {
         autoIdleAt       = 0;
         angerLatched     = false;
         lastActivityTime = millis(); // сбрасываем таймер неактивности при переходе в IDLE
-        (void)MotionDetector::consumeRocking(); // гасим накопленные колебания
+        (void)MotionDetector::consumeRocking(); // сбрасываем счетчики и флаг укачивания
     }
 
     void startTimedAnim(AnimType a, uint32_t durationMs, uint32_t now, bool blink = true) {
@@ -89,13 +90,13 @@ namespace {
         autoIdleAt = now + durationMs;
     }
 
-    void goToSleep() {
+    void goToSleep(const char* reason = "Сон") {
         AnimManager::setAnimation(AnimType::SLEEP, true);
         autoIdleAt     = 0;
         rightDownStart = 0;
         angerLatched   = false;
         sleepEvents++;
-        Serial.println("[main] Укачали -> SLEEP");
+        Serial.printf("[main] %s -> SLEEP\n", reason);
     }
 
     // Во сне жесты кнопок сбрасываем, чтобы они не выстрелили после сна
@@ -185,30 +186,46 @@ namespace {
         AnimType cur = AnimManager::getCurrentAnim();
         bool down = Orientation::isUpsideDown();
 
+        // Если робот перевёрнут — глушим укачивание
+        if (down) {
+            meltCooldownUntil = now + 6000;
+            (void)MotionDetector::consumeRocking();
+        }
+
         if (cur != AnimType::MELT) {
             // Перевёрнут непрерывно 1.8 с -> стекаем в лужу
             if (down && Orientation::getUpsideDownMs() >= MELT_DELAY_MS && cur != AnimType::SLEEP) {
                 AnimMelt::setSideTilt(Orientation::getSideTilt());
                 AnimManager::setAnimation(AnimType::MELT, false);
-                meltStartMs    = now;
-                autoIdleAt     = 0;
-                rightDownStart = 0;
-                angerLatched   = false;
+                meltStartMs       = now;
+                autoIdleAt        = 0;
+                rightDownStart    = 0;
+                angerLatched      = false;
+                meltCooldownUntil = now + 6000;
+                (void)MotionDetector::consumeRocking();
             }
             return;
         }
 
-        // В луже: обновляем боковой наклон
+        // В луже и при восстановлении непрерывно продлеваем защиту от сна
         AnimMelt::setSideTilt(Orientation::getSideTilt());
+        meltCooldownUntil = now + 6000;
+        (void)MotionDetector::consumeRocking();
+        lastActivityTime  = now;
 
         // Вернули в нормальное положение -> запускаем сборку глаз
         if (!down && !AnimMelt::isRecovering() && !AnimMelt::isFinished()
             && (now - meltStartMs >= MELT_MIN_SHOW_MS)) {
             AnimMelt::startRecovery();
+            meltCooldownUntil = now + 6000;
+            (void)MotionDetector::consumeRocking();
         }
 
         // Восстановление завершено -> IDLE
         if (AnimMelt::isFinished()) {
+            meltCooldownUntil = now + 6000; // ещё 6 секунд иммунитета после возврата к середине
+            (void)MotionDetector::consumeRocking();
+            lastActivityTime = now;
             goIdle();
         }
     }
@@ -354,16 +371,18 @@ namespace {
     // 5. Укачивание (Rocking) -> переход в сон
     // ------------------------------------------------------------------------
     void handleRocking(uint32_t now) {
-        (void)now;
         bool rocking = MotionDetector::consumeRocking();
         if (!rocking) return;
+
+        // Блокируем сон, если робот был в луже или восстановился менее 6 секунд назад
+        if (now < meltCooldownUntil) return;
 
         AnimType cur = AnimManager::getCurrentAnim();
         if (!isCalmState(cur)) return;
         if (rightDownStart != 0) return;
         if (Orientation::isReady() && Orientation::isUpsideDown()) return;
 
-        goToSleep();
+        goToSleep("Укачали");
     }
 
     // ------------------------------------------------------------------------
@@ -389,6 +408,12 @@ namespace {
     // 7. Автоматическое засыпание при бездействии
     // ------------------------------------------------------------------------
     void handleInactivity(uint32_t now) {
+        // Блокируем сон во время лужи и 6 секунд после восстановления
+        if (now < meltCooldownUntil) {
+            lastActivityTime = now;
+            return;
+        }
+
         AnimType cur = AnimManager::getCurrentAnim();
 
         // Если играет активная эмоция — робот занят
@@ -412,10 +437,9 @@ namespace {
             return;
         }
 
-        // Время бездействия истекло -> засыпаем
-        if (now - lastActivityTime >= INACTIVITY_SLEEP_MS) {
-            Serial.println("[main] Бездействие -> goToSleep()");
-            goToSleep();
+        // Защита от разницы millis() и проверка честного истечения времени бездействия
+        if (now >= lastActivityTime && (now - lastActivityTime >= INACTIVITY_SLEEP_MS)) {
+            goToSleep("Бездействие");
         }
     }
 
