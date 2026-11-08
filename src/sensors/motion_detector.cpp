@@ -23,16 +23,16 @@ namespace {
     // ------------------------------------------------------------------
     const uint32_t SAMPLE_MS            = 10;      // опрос 100 Гц
     const float    ROCK_LP_ALPHA        = 0.20f;   // плавный фильтр НЧ
-    const float    ROCK_THR             = 12.0f;   // порог перехода через ноль (было 25.0f)
-    const float    ROCK_MIN_PEAK        = 20.0f;   // минимальная скорость (было 45.0f)
+    const float    ROCK_THR             = 16.0f;   // комфортный порог перехода через ноль
+    const float    ROCK_MIN_PEAK        = 32.0f;   // минимальная скорость (естественное покачивание в руке)
     const float    ROCK_MAX_PEAK        = 300.0f;  // максимальная скорость
     const uint32_t ROCK_HALF_MIN_MS     = 200;     // быстрый полупериод
-    const uint32_t ROCK_HALF_MAX_MS     = 1400;    // медленный полупериод (было 900)
-    const float    ROCK_RATIO_MIN       = 0.4f;    // допуск неравномерности
-    const float    ROCK_RATIO_MAX       = 2.5f;
-    const float    ROCK_MAX_HF          = 200.0f;  // терпимость к мелкой дрожи
-    const int      ROCK_HALF_CYCLES     = 3;       // нужно 3 полупериода подряд (было 4)
-    const uint32_t ROCK_TIMEOUT_MS      = 1600;    // таймаут сброса счета (было 1200)
+    const uint32_t ROCK_HALF_MAX_MS     = 1350;    // медленный полупериод (запас под плавный темп)
+    const float    ROCK_RATIO_MIN       = 0.38f;   // мягкий допуск на естественную неравномерность руки
+    const float    ROCK_RATIO_MAX       = 2.6f;
+    const float    ROCK_MAX_HF          = 190.0f;  // фильтрация дрожи
+    const int      ROCK_HALF_CYCLES     = 4;       // ровно 4 полупериода (2 полных качания: влево-вправо-влево-вправо)
+    const uint32_t ROCK_TIMEOUT_MS      = 1500;    // запас времени на паузу между взмахами
     const float    ENV_DECAY            = 0.97f;   // затухание огибающей для выбора оси
     const uint32_t ROCK_REFRACTORY_MS   = 2500;
 
