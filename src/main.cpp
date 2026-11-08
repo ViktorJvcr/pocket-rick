@@ -40,6 +40,8 @@ namespace {
     const uint32_t LOOK_MS                = 1350;   // взгляд в точку удара
     const uint32_t DISDAIN_MS             = 2800;   // презрение при 3 стуках
     const uint32_t SWEAR_MS               = 2600;   // ругань при 5 стуках
+    const uint32_t DIZZY_MS               = 6200;   // укачивание/головокружение от тряски (6.2 с)
+    const uint32_t WINK_MS                = 1800;   // длительность подмигивания (1.8 с)
     const uint32_t MELT_DELAY_MS          = 1800;   // удержание вверх ногами до стекания
     const uint32_t MELT_MIN_SHOW_MS       = 600;    // минимальное время показа лужи
 
@@ -79,6 +81,7 @@ namespace {
         autoIdleAt       = 0;
         angerLatched     = false;
         lastActivityTime = millis(); // сбрасываем таймер неактивности при переходе в IDLE
+        (void)MotionDetector::consumeRocking(); // гасим накопленные колебания
     }
 
     void startTimedAnim(AnimType a, uint32_t durationMs, uint32_t now, bool blink = true) {
@@ -266,22 +269,12 @@ namespace {
             cur = AnimType::JOY;
         }
 
-        // Двойной клик правой кнопки -> безопасный перебор анимаций
-        if (TouchInput::isRightDoubleClicked() && rightDownStart == 0) {
-            AnimManager::nextState();
-            autoIdleAt = 0;
-            cur = AnimManager::getCurrentAnim();
-            Serial.printf("[DEBUG] nextState -> %s\n", AnimManager::getAnimName(cur));
-        }
-
         // Центральная кнопка -> подмигивание
         if (TouchInput::isMidClicked() && isCalmState(cur)) {
-            AnimManager::setAnimation(AnimType::WINK, true);
-            autoIdleAt = 0;
+            startTimedAnim(AnimType::WINK, WINK_MS, now);
+            lastActivityTime = now;
+            (void)MotionDetector::consumeRocking(); // отсекаем ложное укачивание от касания кнопки
             cur = AnimType::WINK;
-        }
-        if (cur == AnimType::WINK && AnimWink::isFinished()) {
-            goIdle();
         }
     }
 
@@ -290,8 +283,16 @@ namespace {
     // ------------------------------------------------------------------------
     void handleTaps(uint32_t now) {
         if (!TapDetector::consumeTap()) return;
-        lastActivityTime = now;
 
+        // Фильтр: игнорируем ложные стуки от инерции, если робота трясут или перемещают
+        float rotSpeed = fabsf(MotionDetector::getGyroX());
+        if (fabsf(MotionDetector::getGyroY()) > rotSpeed) rotSpeed = fabsf(MotionDetector::getGyroY());
+        if (fabsf(MotionDetector::getGyroZ()) > rotSpeed) rotSpeed = fabsf(MotionDetector::getGyroZ());
+        if (rotSpeed > 55.0f) {
+            return;
+        }
+
+        lastActivityTime = now;
         AnimType cur = AnimManager::getCurrentAnim();
         if (!isCalmState(cur) && cur != AnimType::DISDAIN) return;
         if (rightDownStart != 0) return;
@@ -323,6 +324,33 @@ namespace {
     }
 
     // ------------------------------------------------------------------------
+    // 4b. Сильная тряска корпуса -> анимация укачивания/головокружения (DIZZY)
+    // ------------------------------------------------------------------------
+    void handleShake(uint32_t now) {
+        float rotSpeed = fabsf(MotionDetector::getGyroX());
+        if (fabsf(MotionDetector::getGyroY()) > rotSpeed) rotSpeed = fabsf(MotionDetector::getGyroY());
+        if (fabsf(MotionDetector::getGyroZ()) > rotSpeed) rotSpeed = fabsf(MotionDetector::getGyroZ());
+
+        // Используем строго гироскопический детектор знакопеременных колебаний
+        // либо резкое интенсивное кручение корпуса (> 320 °/с).
+        // Акселерометр убран, поэтому плавный или быстрый подъем со стола не вызывает укачивание.
+        // Детектор знакопеременной тряски либо быстрое кручение (> 320 °/с)
+        bool shake = MotionDetector::consumeShake() || (rotSpeed > 320.0f);
+        if (!shake) return;
+
+        AnimType cur = AnimManager::getCurrentAnim();
+        // Тряска имеет приоритет над IDLE и начальными реакциями на стук (LOOK, DISDAIN)
+        if (cur == AnimType::IDLE || cur == AnimType::LOOK || cur == AnimType::DISDAIN) {
+            Serial.println("[main] Сильная тряска -> DIZZY (укачивание/головокружение)");
+            startTimedAnim(AnimType::DIZZY, DIZZY_MS, now, true);
+            lastActivityTime = now;
+
+            while (TapDetector::consumeTap()) {}
+            (void)MotionDetector::consumeRocking();
+        }
+    }
+
+    // ------------------------------------------------------------------------
     // 5. Укачивание (Rocking) -> переход в сон
     // ------------------------------------------------------------------------
     void handleRocking(uint32_t now) {
@@ -348,9 +376,10 @@ namespace {
         AnimType cur = AnimManager::getCurrentAnim();
         if (cur == AnimType::JOY     || cur == AnimType::LAUGH   ||
             cur == AnimType::LOOK    || cur == AnimType::DISDAIN ||
-            cur == AnimType::SWEAR   || cur == AnimType::ANGER) {
+            cur == AnimType::SWEAR   || cur == AnimType::ANGER   ||
+            cur == AnimType::DIZZY   || cur == AnimType::WINK) {
             goIdle();
-            lastActivityTime = now; // эмоция завершилась, таймер бездействия пошёл заново
+            lastActivityTime = now; // робот только что успокоился, таймер бездействия пошёл
         } else {
             autoIdleAt = 0;
         }
@@ -536,6 +565,7 @@ void loop() {
         // Робот бодрствует: переворот, поглаживания, щекотка, стуки и укачивание
         handleUpsideDown(now);
         handleTouch(now);
+        handleShake(now); // Тряска проверяется ДО стуков, очищая ложные удары
         handleTaps(now);
         handleRocking(now);
         handleAutoIdle(now);
