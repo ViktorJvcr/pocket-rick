@@ -10,17 +10,17 @@ namespace {
     const float BASE_Y = 100.0f;
     const float EYE_SPACING = 106.0f;
 
-    // --- Палитра лица (Токсично-зеленовато-желтый неон) ---
+    // Палитра лица (Токсично-зеленовато-желтый неон)
     uint16_t colorEye;
     uint16_t colorGlow1;
     uint16_t colorGlow2;
 
-    // --- Палитра Радуги (Nyan Cat style) ---
+    // Палитра Радуги (6 цветов Nyan Cat)
     uint16_t rainbowColors[6];
     uint16_t rainbowGlow;
     uint16_t colorSparkle;
 
-    // --- Стандартные переменные физики ---
+    // Переменные физики лица
     float cx = CENTER_X, cy = BASE_Y;
     float currentSpacing = EYE_SPACING;
     float lx = CENTER_X - EYE_SPACING / 2.0f, rx = CENTER_X + EYE_SPACING / 2.0f;
@@ -29,17 +29,17 @@ namespace {
 
     float t_cx = CENTER_X, t_cy = BASE_Y;
     float t_spacing = EYE_SPACING;
-    float t_lw = 52.0f, t_rw = 52.0f, t_lh = 52.0f, t_rh = 52.0f;
+    float t_lw = 54.0f, t_rw = 54.0f, t_lh = 54.0f, t_rh = 54.0f;
     float t_mw = 28.0f, t_mh = 6.0f;
 
-    // Специфичные переменные для Dizzy
+    // Переменные анимации
     float eyeOffsetY = 0.0f;
-    float spiralAngle = 0.0f;
     float pukeProgress = 0.0f;
+    float puddleScale = 0.0f;
     uint32_t animStartTime = 0;
     uint32_t lastStepTime = 0;
 
-    // --- Система частиц ---
+    // --- Система частиц радуги ---
     struct Particle {
         float x, y;
         float vx, vy;
@@ -47,161 +47,210 @@ namespace {
         uint8_t type;
         bool active;
     };
-    const int MAX_PARTICLES = 18;
+    const int MAX_PARTICLES = 16;
     Particle particles[MAX_PARTICLES];
 
-    void drawSparkle(TFT_eSprite &sprite, int x, int y, int r, uint16_t col) {
-        sprite.drawFastHLine(x - r, y, r * 2 + 1, col);
-        sprite.drawFastVLine(x, y - r, r * 2 + 1, col);
-        sprite.drawPixel(x - 1, y - 1, col);
-        sprite.drawPixel(x + 1, y - 1, col);
-        sprite.drawPixel(x - 1, y + 1, col);
-        sprite.drawPixel(x + 1, y + 1, col);
+    // Рисование 4-конечной звездочки (эффект оглушения / головокружения)
+    void drawCartoonStar(TFT_eSprite &sprite, int sx, int sy, int r, uint16_t colorCore, uint16_t colorGlow) {
+        if (r < 2) return;
+        sprite.drawFastHLine(sx - r - 1, sy, (r + 1) * 2 + 1, colorGlow);
+        sprite.drawFastVLine(sx, sy - r - 1, (r + 1) * 2 + 1, colorGlow);
+        sprite.drawLine(sx - r/2 - 1, sy - r/2 - 1, sx + r/2 + 1, sy + r/2 + 1, colorGlow);
+        sprite.drawLine(sx - r/2 - 1, sy + r/2 + 1, sx + r/2 + 1, sy - r/2 - 1, colorGlow);
+
+        sprite.drawFastHLine(sx - r, sy, r * 2 + 1, colorCore);
+        sprite.drawFastVLine(sx, sy - r, r * 2 + 1, colorCore);
+        sprite.drawLine(sx - r/2, sy - r/2, sx + r/2, sy + r/2, colorCore);
+        sprite.drawLine(sx - r/2, sy + r/2, sx + r/2, sy - r/2, colorCore);
+        sprite.fillCircle(sx, sy, 1, TFT_WHITE);
     }
 
-    // 3-слойная гладкая и яркая спираль Архимеда (Глаза @ @)
-    void drawSpiralEye(TFT_eSprite &sprite, float centerX, float centerY, float maxR, float angleOffset, int dir) {
-        if (maxR < 4.0f) maxR = 4.0f;
-        const float maxTheta = 2.15f * 2.0f * PI;
+    // Значок головокружения над правым глазом (крутящиеся лучи-искорки)
+    void drawDizzyIconOverRightEye(TFT_eSprite &sprite, float rightX, float rightY, float timeSec) {
+        float iconX = rightX + 18.0f + sinf(timeSec * 6.0f) * 3.0f;
+        float iconY = rightY - 34.0f + cosf(timeSec * 5.0f) * 3.0f;
 
-        for (int pass = 0; pass < 3; pass++) {
-            uint16_t col = (pass == 0) ? colorGlow2 : ((pass == 1) ? colorGlow1 : colorEye);
-            int brushR = (pass == 0) ? 6 : ((pass == 1) ? 4 : 2);
+        float pulse = 0.85f + 0.25f * sinf(timeSec * 8.0f);
+        float spin = timeSec * 6.5f;
 
-            float theta = 0.0f;
-            while (theta < maxTheta) {
-                float r = (theta / maxTheta) * maxR;
-                float a = dir * theta + angleOffset;
-                int px = (int)(centerX + cosf(a) * r);
-                int py = (int)(centerY + sinf(a) * r);
-                sprite.fillCircle(px, py, brushR, col);
+        for (int i = 0; i < 3; i++) {
+            float ang = spin + i * 2.094f; // 120 градусов
+            int x1 = (int)(iconX + cosf(ang) * (4.0f * pulse));
+            int y1 = (int)(iconY + sinf(ang) * (4.0f * pulse));
+            int x2 = (int)(iconX + cosf(ang) * (11.0f * pulse));
+            int y2 = (int)(iconY + sinf(ang) * (11.0f * pulse));
 
-                float step = (r < 4.0f) ? 0.20f : (1.2f / r);
-                theta += step;
-            }
+            sprite.drawLine(x1, y1, x2, y2, colorGlow1);
+            sprite.drawLine(x1, y1 + 1, x2, y2 + 1, colorGlow2);
+            sprite.drawPixel(x2, y2, colorSparkle);
+        }
+
+        drawCartoonStar(sprite, (int)iconX, (int)iconY, (int)(4 * pulse), colorSparkle, colorGlow1);
+
+        int miniX = (int)(iconX + 13.0f);
+        int miniY = (int)(iconY - 6.0f);
+        drawCartoonStar(sprite, miniX, miniY, 2, colorEye, colorGlow2);
+    }
+
+    // Летающие звездочки вокруг обоих глаз
+    void drawOrbitingDizzyStars(TFT_eSprite &sprite, float leftX, float leftY, float rightX, float rightY, float timeSec) {
+        for (int i = 0; i < 3; i++) {
+            float ang = timeSec * 4.2f + i * 2.094f;
+            float ox = cosf(ang) * 34.0f;
+            float oy = sinf(ang) * 18.0f;
+            int starX = (int)(leftX + ox);
+            int starY = (int)(leftY + oy - 4.0f);
+            int sz = 3 + (i % 2);
+            drawCartoonStar(sprite, starX, starY, sz, colorSparkle, colorGlow1);
+        }
+
+        for (int i = 0; i < 3; i++) {
+            float ang = -timeSec * 3.8f + i * 2.094f + 1.0f;
+            float ox = cosf(ang) * 34.0f;
+            float oy = sinf(ang) * 18.0f;
+            int starX = (int)(rightX + ox);
+            int starY = (int)(rightY + oy - 4.0f);
+            int sz = 3 + ((i + 1) % 2);
+            drawCartoonStar(sprite, starX, starY, sz, rainbowColors[i * 2], rainbowGlow);
         }
     }
 
-    // Асимметричные "пьяные" брови
+    // ОДНОРОДНЫЕ КРУГЛЫЕ ГЛАЗА В СТИЛЕ IDLE (без спиралей, 3 сплошных светящихся слоя)
+    void drawRoundSolidEye(TFT_eSprite &sprite, float ex, float ey, float ew, float eh) {
+        int ix = (int)(ex - ew / 2.0f);
+        int iy = (int)(ey - eh / 2.0f);
+        int rad = (int)(fminf(ew, eh) * 0.5f);
+
+        // Внешний ореол свечения (glow2)
+        sprite.fillRoundRect(ix - 5, iy - 5, (int)ew + 10, (int)eh + 10, rad + 4, colorGlow2);
+        // Средний ореол свечения (glow1)
+        sprite.fillRoundRect(ix - 3, iy - 3, (int)ew + 6,  (int)eh + 6,  rad + 2, colorGlow1);
+        // Сплошное монолитное ядро глаза (colorEye), полностью заполненное
+        sprite.fillRoundRect(ix,     iy,     (int)ew,      (int)eh,      rad,     colorEye);
+    }
+
+    // Брови
     void drawDizzyBrows(TFT_eSprite &sprite, float leftX, float leftY, float rightX, float rightY, float phase) {
-        for (int pass = 0; pass < 3; pass++) {
-            uint16_t col = (pass == 0) ? colorGlow2 : ((pass == 1) ? colorGlow1 : colorEye);
-            int brushR = (pass == 0) ? 5 : ((pass == 1) ? 2 : 1);
+        int prevLX = (int)(leftX - 18), prevLY = (int)(leftY - 30.0f + sinf(-2.0f + phase) * 5.0f + 4.0f);
+        int prevRX = (int)(rightX - 18), prevRY = (int)(rightY - 30.0f + cosf(-2.0f + phase) * 5.0f - 5.0f);
 
-            for (int i = -18; i <= 18; i += 2) {
-                float norm = (float)i / 18.0f;
-                int lbx = (int)(leftX + i);
-                int lby = (int)(leftY - 30.0f + sinf(norm * 2.0f + phase) * 5.0f - norm * 4.0f);
-                if (lby < 14) lby = 14;
-                sprite.fillCircle(lbx, lby, brushR, col);
+        for (int i = -14; i <= 18; i += 4) {
+            float norm = (float)i / 18.0f;
+            int lbx = (int)(leftX + i);
+            int lby = (int)(leftY - 30.0f + sinf(norm * 2.0f + phase) * 5.0f - norm * 4.0f);
+            int rbx = (int)(rightX + i);
+            int rby = (int)(rightY - 30.0f + cosf(norm * 2.0f + phase) * 5.0f + norm * 5.0f);
 
-                int rbx = (int)(rightX + i);
-                int rby = (int)(rightY - 30.0f + cosf(norm * 2.0f + phase) * 5.0f + norm * 5.0f);
-                if (rby < 14) rby = 14;
-                sprite.fillCircle(rbx, rby, brushR, col);
-            }
+            sprite.drawLine(prevLX, prevLY - 1, lbx, lby - 1, colorGlow1);
+            sprite.drawLine(prevLX, prevLY, lbx, lby, colorEye);
+            sprite.drawLine(prevLX, prevLY + 1, lbx, lby + 1, colorEye);
+
+            sprite.drawLine(prevRX, prevRY - 1, rbx, rby - 1, colorGlow1);
+            sprite.drawLine(prevRX, prevRY, rbx, rby, colorEye);
+            sprite.drawLine(prevRX, prevRY + 1, rbx, rby + 1, colorEye);
+
+            prevLX = lbx; prevLY = lby;
+            prevRX = rbx; prevRY = rby;
         }
     }
 
-    // Рот: плавный морфинг от тошнотворной волны (~) к открытому рту (O)
+    // РОТ: волна либо ПОЛНОСТЬЮ ЗАПОЛНЕННЫЙ КРУГ БЕЗ ОТВЕРСТИЯ
     void drawDizzyMouth(TFT_eSprite &sprite, float mx, float my, float w, float h, float timeSec, bool isPuking) {
-        if (!isPuking && h < 14.0f) {
-            for (int pass = 0; pass < 3; pass++) {
-                uint16_t col = (pass == 0) ? colorGlow2 : ((pass == 1) ? colorGlow1 : colorEye);
-                int brushR = (pass == 0) ? 6 : ((pass == 1) ? 3 : 1);
-
-                int halfW = (int)(w / 2.0f);
-                for (int x = -halfW; x <= halfW; x += 2) {
-                    float wave = sinf(x * 0.22f + timeSec * 10.0f) * (h * 0.6f);
-                    sprite.fillCircle((int)mx + x, (int)my + (int)wave, brushR, col);
-                }
-                sprite.fillCircle((int)mx - halfW - 3, (int)my, brushR + 1, col);
-                sprite.fillCircle((int)mx + halfW + 3, (int)my, brushR + 1, col);
+        if (!isPuking && h < 16.0f) {
+            int halfW = (int)(w / 2.0f);
+            int prevX = (int)mx - halfW;
+            int prevY = (int)my;
+            for (int x = -halfW + 3; x <= halfW; x += 3) {
+                float wave = sinf(x * 0.22f + timeSec * 10.0f) * (h * 0.6f);
+                int curX = (int)mx + x;
+                int curY = (int)my + (int)wave;
+                sprite.drawLine(prevX, prevY - 1, curX, curY - 1, colorGlow1);
+                sprite.drawLine(prevX, prevY,     curX, curY,     colorEye);
+                sprite.drawLine(prevX, prevY + 1, curX, curY + 1, colorEye);
+                sprite.drawLine(prevX, prevY + 2, curX, curY + 2, colorGlow1);
+                prevX = curX;
+                prevY = curY;
             }
         } else {
-            int rx_i = (int)(mx - w / 2.0f);
-            int ry_i = (int)(my - h / 2.0f);
-            int rw_i = (int)w;
-            int rh_i = (int)h;
-            int rad = (rh_i > 20) ? 10 : (rh_i / 2);
+            // ПОЛНОСТЬЮ ЗАПОЛНЕННЫЙ КРУГЛЫЙ РОТ (без черного отверстия внутри)
+            int rOuter = (int)(w * 0.5f);
+            if (rOuter < 16) rOuter = 10;
 
-            sprite.fillRoundRect(rx_i - 4, ry_i - 4, rw_i + 8, rh_i + 8, rad + 3, colorGlow2);
-            sprite.fillRoundRect(rx_i - 2, ry_i - 2, rw_i + 4, rh_i + 4, rad + 1, colorGlow1);
-            sprite.fillRoundRect(rx_i, ry_i, rw_i, rh_i, rad, colorEye);
-            if (rw_i > 8 && rh_i > 8) {
-                sprite.fillRoundRect(rx_i + 3, ry_i + 3, rw_i - 6, rh_i - 6, max(1, rad - 2), TFT_BLACK);
-            }
+            sprite.fillCircle((int)mx, (int)my, rOuter + 4, colorGlow2);
+            sprite.fillCircle((int)mx, (int)my, rOuter + 2, colorGlow1);
+            sprite.fillCircle((int)mx, (int)my, rOuter,     colorEye);
         }
     }
 
-    // Извержение радуги (Nyan Cat Waterfall)
-    void drawRainbowVomit(TFT_eSprite &sprite, float mx, float my, float w, float progress, float timeSec) {
-        if (progress <= 0.01f) return;
+    // РАДУГА: сплошная монолитная струя + лужа на дне спрайта
+    void drawRainbowAndPuddle(TFT_eSprite &sprite, float mx, float my, float w, float progress, float timeSec) {
+        if (progress <= 0.02f) return;
 
-        int startY = (int)my - 2;
-        int maxEndY = 280;
+        int startY = (int)my + 4; // вытекает из круглого рта
+        int maxEndY = 196;        // дно спрайта
         int currentEndY = startY + (int)((maxEndY - startY) * progress);
+        if (currentEndY > maxEndY) currentEndY = maxEndY;
 
-        float stripWidth = (w - 4.0f) / 6.0f;
-        if (stripWidth < 4.0f) stripWidth = 4.0f;
-        float totalRainbowW = stripWidth * 6.0f;
+        float baseStripW = (w - 4.0f) / 6.0f;
+        if (baseStripW < 4.0f) baseStripW = 4.0f;
 
-        for (int y = startY; y < currentEndY; y += 3) {
-            float wave = sinf(y * 0.09f - timeSec * 18.0f) * 7.0f;
-            int leftX = (int)(mx - totalRainbowW / 2.0f + wave);
-            sprite.drawFastHLine(leftX - 4, y, (int)totalRainbowW + 8, rainbowGlow);
-            sprite.drawFastHLine(leftX - 4, y + 1, (int)totalRainbowW + 8, rainbowGlow);
-            sprite.drawFastHLine(leftX - 4, y + 2, (int)totalRainbowW + 8, rainbowGlow);
-        }
-
+        // Поток радуги (шаг 2px для плотного заполнения)
         for (int y = startY; y < currentEndY; y += 2) {
             float distFactor = (float)(y - startY) / (float)(maxEndY - startY);
-            float spread = 1.0f + distFactor * 0.35f;
-            float currentStripW = stripWidth * spread;
-            float currentTotalW = currentStripW * 6.0f;
+            float spread = 1.0f + distFactor * 0.50f;
+            float stripW = baseStripW * spread;
+            float totalW = stripW * 6.0f;
 
-            float wave = sinf(y * 0.09f - timeSec * 18.0f) * (6.0f + distFactor * 6.0f);
-            float baseX = mx - currentTotalW / 2.0f + wave;
+            float wave = sinf(y * 0.075f - timeSec * 16.0f) * (4.0f + distFactor * 6.0f);
+            float baseX = mx - totalW / 2.0f + wave;
+
+            sprite.drawFastHLine((int)baseX - 4, y, (int)totalW + 8, rainbowGlow);
+            sprite.drawFastHLine((int)baseX - 4, y + 1, (int)totalW + 8, rainbowGlow);
 
             for (int i = 0; i < 6; i++) {
-                int sx = (int)(baseX + i * currentStripW);
-                int sw = (int)(currentStripW + 1.5f);
+                int sx = (int)(baseX + i * stripW);
+                int sw = (int)(stripW + 1.4f);
                 sprite.fillRect(sx, y, sw, 2, rainbowColors[i]);
             }
         }
 
-        for (int i = 0; i < 6; i++) {
-            float bubbleWave = sinf(timeSec * 15.0f + i * 1.3f) * 3.0f;
-            int bx = (int)(mx - totalRainbowW / 2.0f + (i + 0.5f) * stripWidth);
-            sprite.fillCircle(bx, startY + (int)bubbleWave, 4, rainbowColors[i]);
-            if (progress > 0.95f) {
-                int splashX = (int)(mx - (totalRainbowW * 0.7f) + i * (stripWidth * 1.4f) + bubbleWave * 2.0f);
-                sprite.fillCircle(splashX, 167, 6, rainbowColors[i]);
+        // Радужная лужа на дне
+        if (puddleScale > 0.02f) {
+            float pW = 45.0f + puddleScale * 115.0f;
+            float pH = 8.0f + puddleScale * 18.0f;
+            float wobble = sinf(timeSec * 8.0f) * 3.0f;
+
+            sprite.fillRoundRect((int)(mx - (pW + 10) / 2.0f + wobble), 199 - (int)pH - 3, (int)pW + 10, (int)pH + 4, 8, rainbowGlow);
+
+            for (int i = 5; i >= 0; i--) {
+                float layerFactor = (float)(i + 1) / 6.0f;
+                int lw = (int)(pW * layerFactor);
+                int lh = (int)(pH * layerFactor);
+                if (lh < 3) lh = 3;
+                int lx = (int)(mx - lw / 2.0f + wobble * (1.0f - layerFactor * 0.4f));
+                int ly = 199 - lh;
+                sprite.fillRoundRect(lx, ly, lw, lh, lh / 2 + 1, rainbowColors[i]);
             }
+
+            float splash = sinf(timeSec * 14.0f) * 2.5f;
+            sprite.fillCircle((int)(mx - pW * 0.54f), 194 + (int)splash, 3, rainbowColors[0]);
+            sprite.fillCircle((int)(mx + pW * 0.54f), 194 - (int)splash, 3, rainbowColors[5]);
+            sprite.fillCircle((int)(mx - pW * 0.38f), 188, 2, rainbowColors[1]);
+            sprite.fillCircle((int)(mx + pW * 0.38f), 188, 2, rainbowColors[4]);
         }
     }
 
     void updateAndDrawParticles(TFT_eSprite &sprite, float mx, float my, bool isPuking, float timeSec) {
         for (int i = 0; i < MAX_PARTICLES; i++) {
             if (!particles[i].active) {
-                if (isPuking && random(0, 100) < 45) {
+                if (isPuking && random(0, 100) < 40) {
                     particles[i].active = true;
-                    particles[i].type = (random(0, 100) < 35) ? 0 : 1;
-                    particles[i].x = mx + random(-24, 25);
-                    particles[i].y = my + random(5, 65);
-                    particles[i].vx = random(-35, 36) / 10.0f;
-                    particles[i].vy = random(15, 45) / 10.0f;
+                    particles[i].type = (random(0, 100) < 40) ? 0 : 1;
+                    particles[i].x = mx + random(-20, 21);
+                    particles[i].y = my + random(5, 50);
+                    particles[i].vx = random(-25, 26) / 10.0f;
+                    particles[i].vy = random(12, 35) / 10.0f;
                     particles[i].color = (particles[i].type == 0) ? colorSparkle : rainbowColors[random(0, 6)];
-                    break;
-                } else if (!isPuking && random(0, 100) < 15) {
-                    particles[i].active = true;
-                    particles[i].type = 0;
-                    float angle = random(0, 628) / 100.0f;
-                    particles[i].x = cx + cosf(angle) * 75.0f;
-                    particles[i].y = cy - 35.0f + sinf(angle) * 18.0f;
-                    particles[i].vx = -sinf(angle) * 1.5f;
-                    particles[i].vy = cosf(angle) * 0.5f;
-                    particles[i].color = (random(0, 2) == 0) ? colorSparkle : rainbowColors[1];
                     break;
                 }
             }
@@ -214,15 +263,13 @@ namespace {
             particles[i].y += particles[i].vy;
 
             if (particles[i].type == 1) {
-                particles[i].vy += 0.25f;
-                sprite.fillCircle((int)particles[i].x, (int)particles[i].y, 3, rainbowGlow);
-                sprite.fillCircle((int)particles[i].x, (int)particles[i].y, 2, particles[i].color);
+                particles[i].vy += 0.20f;
+                sprite.fillRect((int)particles[i].x, (int)particles[i].y, 2, 2, particles[i].color);
             } else {
-                int r = 3 + ((int)(timeSec * 20.0f + i) % 2);
-                drawSparkle(sprite, (int)particles[i].x, (int)particles[i].y, r, particles[i].color);
+                drawCartoonStar(sprite, (int)particles[i].x, (int)particles[i].y, 2, particles[i].color, rainbowGlow);
             }
 
-            if (particles[i].y > 175 || particles[i].x < -10 || particles[i].x > 330) {
+            if (particles[i].y > 196 || particles[i].x < 5 || particles[i].x > 235) {
                 particles[i].active = false;
             }
         }
@@ -249,19 +296,20 @@ void init(TFT_eSPI &tft) {
 }
 
 void reset() {
-    // 1. Загружаем текущую геометрию из предыдущей эмоции
+    // Подхватываем текущую геометрию лица из IDLE
     FaceState::loadGeometry(cx, cy, currentSpacing, lw, rw, lh, rh, mw, mh);
-
-    // 2. Плавно переливаем цвет в кислотно-лаймовый
+    // Плавная смена палитры на токсично-лаймовую
     FaceState::setTargetPalette(180, 255, 60, 50, 175, 20, 10, 65, 5);
 
-    // Начинаем раскручивать спирали из прищуренного размера глаз (плавное раскрытие спиралей!)
-    lw = lh;
-    rw = rh;
     t_spacing = EYE_SPACING;
+    // Целевая форма глаз — идеальные круги диаметром 54 x 54 px
+    t_lw = 54.0f;
+    t_rw = 54.0f;
+    t_lh = 54.0f;
+    t_rh = 54.0f;
 
     pukeProgress = 0.0f;
-    spiralAngle = 0.0f;
+    puddleScale = 0.0f;
     animStartTime = millis();
     lastStepTime = millis();
 
@@ -271,12 +319,13 @@ void reset() {
 }
 
 void runStep(TFT_eSPI &tft, TFT_eSprite &sprite) {
+    (void)tft; // Рендер строго в спрайт, мерцание экрана исключено
+
     uint32_t now = millis();
     float dt = (now - lastStepTime) / 1000.0f;
     if (dt > 0.1f) dt = 0.1f;
     lastStepTime = now;
 
-    // Берем плавно интерполируемый цвет из FaceState
     colorEye   = FaceState::current.colorEye;
     colorGlow1 = FaceState::current.colorGlow1;
     colorGlow2 = FaceState::current.colorGlow2;
@@ -287,56 +336,86 @@ void runStep(TFT_eSPI &tft, TFT_eSprite &sprite) {
     bool isGagging = (cycleTime >= 2.1f && cycleTime < 2.55f);
     bool isPuking  = (cycleTime >= 2.55f && cycleTime < 5.7f);
 
+    // СИЛЬНАЯ ХАОТИЧНАЯ ТРЯСКА
     float shakeX = 0.0f;
     float shakeY = 0.0f;
+
+    // Раздельная хаотичная дрожь для каждого глаза (эффект ошеломления)
+    float lJitterX = 0.0f, lJitterY = 0.0f;
+    float rJitterX = 0.0f, rJitterY = 0.0f;
 
     if (isGagging) {
         t_cx = CENTER_X;
         t_cy = BASE_Y + 12.0f;
-        t_lw = 44.0f; t_rw = 44.0f;
-        t_lh = 44.0f; t_rh = 44.0f;
-        t_mw = 18.0f; t_mh = 10.0f;
-        spiralAngle += 5.0f * dt;
+        t_lw = 46.0f; t_rw = 46.0f;
+        t_lh = 46.0f; t_rh = 46.0f;
+        t_mw = 20.0f; t_mh = 12.0f;
+
+        shakeX = (float)random(-3, 4);
+        shakeY = (float)random(-3, 4);
+
         pukeProgress += (0.0f - pukeProgress) * 0.25f;
+        puddleScale += (0.0f - puddleScale) * 0.15f;
     } else if (isPuking) {
         t_cx = CENTER_X + sinf(timeSec * 8.0f) * 6.0f;
         t_cy = BASE_Y - 8.0f;
-        t_lw = 58.0f; t_rw = 58.0f;
-        t_lh = 58.0f; t_rh = 58.0f;
-        t_mw = 48.0f; t_mh = 30.0f;
+        t_lw = 54.0f; t_rw = 54.0f;
+        t_lh = 54.0f; t_rh = 54.0f;
 
-        shakeX = random(-2, 3);
-        shakeY = random(-2, 3);
+        // ИДЕАЛЬНО КРУГЛЫЙ РОТ: диаметр 38 x 38 px
+        t_mw = 22.0f;
+        t_mh = 22.0f;
 
-        spiralAngle += 16.0f * dt;
+        // Мощная дрожь головы при извержении
+        shakeX = (float)random(-6, 7) + sinf(timeSec * 35.0f) * 3.0f;
+        shakeY = (float)random(-5, 6) + cosf(timeSec * 40.0f) * 2.5f;
+
+        // Асинхронная вибрация глаз
+        lJitterX = (float)random(-3, 4);
+        lJitterY = (float)random(-3, 4);
+        rJitterX = (float)random(-3, 4);
+        rJitterY = (float)random(-3, 4);
+
         pukeProgress += (1.0f - pukeProgress) * 0.18f;
+
+        if (pukeProgress > 0.60f) {
+            puddleScale += (1.0f - puddleScale) * 0.14f;
+        }
     } else {
+        // Сильная дрожь и покачивание головы при тошноте
         t_cx = CENTER_X + sinf(timeSec * 3.2f) * 16.0f;
         t_cy = BASE_Y + sinf(timeSec * 6.4f) * 7.0f;
-        t_lw = 52.0f + sinf(timeSec * 5.0f) * 6.0f;
-        t_rw = 52.0f - sinf(timeSec * 5.0f) * 6.0f;
+        t_lw = 54.0f + sinf(timeSec * 5.0f) * 6.0f;
+        t_rw = 54.0f - sinf(timeSec * 5.0f) * 6.0f;
         t_lh = t_lw;
         t_rh = t_rw;
         t_mw = 32.0f;
         t_mh = 6.0f;
 
-        spiralAngle += 7.5f * dt;
+        shakeX = (float)random(-4, 5) + sinf(timeSec * 28.0f) * 2.5f;
+        shakeY = (float)random(-3, 4) + cosf(timeSec * 32.0f) * 2.0f;
+
+        lJitterX = (float)random(-2, 3);
+        lJitterY = (float)random(-2, 3);
+        rJitterX = (float)random(-2, 3);
+        rJitterY = (float)random(-2, 3);
+
         pukeProgress += (0.0f - pukeProgress) * 0.2f;
+        puddleScale += (0.0f - puddleScale) * 0.12f;
     }
 
-    // Пружинная физика
-    const float speed = 0.18f;
+    // Плавная физика перетекания из геометрии IDLE в круги
+    const float speed = 0.15f;
     cx += (t_cx - cx) * speed;
     cy += (t_cy - cy) * speed;
     currentSpacing += (t_spacing - currentSpacing) * speed;
     lw += (t_lw - lw) * speed;
     rw += (t_rw - rw) * speed;
-    lh += (t_lh - lh) * speed;
+    lh += (t_lh - lh) * speed; // плавно уменьшается с 80 до 54
     rh += (t_rh - rh) * speed;
-    mw += (t_mw - mw) * 0.25f;
-    mh += (t_mh - mh) * 0.25f;
+    mw += (t_mw - mw) * 0.22f;
+    mh += (t_mh - mh) * 0.22f;
 
-    // Сохраняем актуальную геометрию в FaceState
     FaceState::saveGeometry(cx, cy, currentSpacing, lw, rw, lh, rh, mw, mh);
 
     eyeOffsetY = sinf(timeSec * 4.5f) * 6.0f;
@@ -345,17 +424,28 @@ void runStep(TFT_eSPI &tft, TFT_eSprite &sprite) {
     rx = cx + currentSpacing / 2.0f + shakeX;
     float curCy = cy + shakeY;
 
-    // --- ОТРИСОВКА КАДРА ---
+    // --- ОТРИСОВКА В БУФЕРЕ СПРАЙТА ---
     sprite.fillSprite(TFT_BLACK);
 
-    float mouthY = curCy + 42.0f;
+    float mouthY = curCy + 40.0f;
 
+    // 1. Монолитный поток радуги + лужа на дне спрайта
+    drawRainbowAndPuddle(sprite, cx + shakeX, mouthY, mw, pukeProgress, timeSec);
+
+    // 2. ПОЛНОСТЬЮ ЗАПОЛНЕННЫЙ КРУГЛЫЙ РОТ
     drawDizzyMouth(sprite, cx + shakeX, mouthY, mw, mh, timeSec, isPuking || (pukeProgress > 0.2f));
-    drawRainbowVomit(sprite, cx + shakeX, mouthY, mw, pukeProgress, timeSec);
 
-    drawSpiralEye(sprite, lx, curCy + eyeOffsetY, lw * 0.5f, spiralAngle, 1);
-    drawSpiralEye(sprite, rx, curCy - eyeOffsetY, rw * 0.5f, spiralAngle, -1);
+    // 3. ОДНОРОДНЫЕ КРУГЛЫЕ ГЛАЗА В СТИЛЕ IDLE С СИЛЬНОЙ ДРОЖЬЮ
+    drawRoundSolidEye(sprite, lx + lJitterX, curCy + eyeOffsetY + lJitterY, lw, lh);
+    drawRoundSolidEye(sprite, rx + rJitterX, curCy - eyeOffsetY + rJitterY, rw, rh);
 
+    // 4. Летающие звездочки вокруг глаз
+    drawOrbitingDizzyStars(sprite, lx, curCy + eyeOffsetY, rx, curCy - eyeOffsetY, timeSec);
+
+    // 5. Значок головокружения над правым глазом
+    drawDizzyIconOverRightEye(sprite, rx, curCy - eyeOffsetY, timeSec);
+
+    // 6. Брови и частицы
     drawDizzyBrows(sprite, lx, curCy + eyeOffsetY, rx, curCy - eyeOffsetY, timeSec * 4.0f);
     updateAndDrawParticles(sprite, cx + shakeX, mouthY, isPuking, timeSec);
 

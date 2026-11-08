@@ -342,7 +342,7 @@ namespace {
         // Тряска имеет приоритет над IDLE и начальными реакциями на стук (LOOK, DISDAIN)
         if (cur == AnimType::IDLE || cur == AnimType::LOOK || cur == AnimType::DISDAIN) {
             Serial.println("[main] Сильная тряска -> DIZZY (укачивание/головокружение)");
-            startTimedAnim(AnimType::DIZZY, DIZZY_MS, now, true);
+            startTimedAnim(AnimType::DIZZY, DIZZY_MS, now, false); // blink=false для плавного входа из IDLE
             lastActivityTime = now;
 
             while (TapDetector::consumeTap()) {}
