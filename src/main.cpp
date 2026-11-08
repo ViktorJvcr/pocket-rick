@@ -49,10 +49,13 @@ namespace {
     uint32_t lastFrameTime         = 0;
     uint32_t lastServiceDraw       = 0;
 
+   const uint32_t INACTIVITY_SLEEP_MS    = 60000;  // Время бездействия до сна (60 сек, настройте под себя)
+
     uint32_t autoIdleAt            = 0;      // таймер возврата в IDLE (0 = выключен)
     uint32_t rightDownStart        = 0;      // момент нажатия правой кнопки (0 = отпущена)
     bool     angerLatched          = false;  // срыв в ярость зафиксирован
     uint32_t meltStartMs           = 0;
+    uint32_t lastActivityTime      = 0;      // время последнего действия/жеста
 
     // Метрики FPS и статистика
     uint32_t fpsFrames             = 0;
@@ -71,8 +74,9 @@ namespace {
 
     void goIdle() {
         AnimManager::setAnimation(AnimType::IDLE, true);
-        autoIdleAt   = 0;
-        angerLatched = false;
+        autoIdleAt       = 0;
+        angerLatched     = false;
+        lastActivityTime = millis(); // сбрасываем таймер неактивности при переходе в IDLE
     }
 
     void startTimedAnim(AnimType a, uint32_t durationMs, uint32_t now, bool blink = true) {
@@ -110,6 +114,8 @@ namespace {
         // 1. Ворчливое пробуждение завершилось -> возврат в IDLE
         if (AnimSleep::isFinished()) {
             goIdle();
+            lastActivityTime = now; // пошёл новый отсчёт 60 секунд
+            (void)MotionDetector::consumeRocking(); // гасим ложное укачивание
             Serial.println("[main] Проснулся -> IDLE");
             return;
         }
@@ -135,9 +141,11 @@ namespace {
         bool isShaking = MotionDetector::consumeShake() || (rotSpeed > 250.0f);
         if (isShaking) {
             wakeByShake++;
+            lastActivityTime = now; // фиксируем активность сразу при встряхивании
             Serial.println("[main] Заметная тряска -> wakeUpGrumpy (вялое ворчание)");
-            // Сбрасываем любые стуки, возникшие из-за ускорений при тряске
+            // Сбрасываем любые стуки и укачивания от тряски
             while (TapDetector::consumeTap()) {}
+            (void)MotionDetector::consumeRocking();
             AnimSleep::wakeUpGrumpy();
             return;
         }
@@ -205,6 +213,9 @@ namespace {
     // ------------------------------------------------------------------------
     void handleTouch(uint32_t now) {
         AnimType cur = AnimManager::getCurrentAnim();
+        if (TouchInput::isRightDown() || TouchInput::isMidDown()) {
+            lastActivityTime = now;
+        }
 
         // Щекотка (быстрое поочерёдное нажатие)
         if (TouchInput::isTickleDetected() && cur != AnimType::ANGER && cur != AnimType::MELT) {
@@ -277,6 +288,7 @@ namespace {
     // ------------------------------------------------------------------------
     void handleTaps(uint32_t now) {
         if (!TapDetector::consumeTap()) return;
+        lastActivityTime = now;
 
         AnimType cur = AnimManager::getCurrentAnim();
         if (!isCalmState(cur) && cur != AnimType::DISDAIN) return;
@@ -336,8 +348,43 @@ namespace {
             cur == AnimType::LOOK    || cur == AnimType::DISDAIN ||
             cur == AnimType::SWEAR   || cur == AnimType::ANGER) {
             goIdle();
+            lastActivityTime = now; // эмоция завершилась, таймер бездействия пошёл заново
         } else {
             autoIdleAt = 0;
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 7. Автоматическое засыпание при бездействии
+    // ------------------------------------------------------------------------
+    void handleInactivity(uint32_t now) {
+        AnimType cur = AnimManager::getCurrentAnim();
+
+        // Если играет активная эмоция — робот занят
+        if (cur != AnimType::IDLE) {
+            lastActivityTime = now;
+            return;
+        }
+
+        // Если удерживается сенсорная кнопка
+        if (rightDownStart != 0) {
+            lastActivityTime = now;
+            return;
+        }
+
+        // Если корпус шевелят (угловая скорость > 20 °/с) — активность
+        float rotSpeed = fabsf(MotionDetector::getGyroX());
+        if (fabsf(MotionDetector::getGyroY()) > rotSpeed) rotSpeed = fabsf(MotionDetector::getGyroY());
+        if (fabsf(MotionDetector::getGyroZ()) > rotSpeed) rotSpeed = fabsf(MotionDetector::getGyroZ());
+        if (rotSpeed > 20.0f) {
+            lastActivityTime = now;
+            return;
+        }
+
+        // Время бездействия истекло -> засыпаем
+        if (now - lastActivityTime >= INACTIVITY_SLEEP_MS) {
+            Serial.println("[main] Бездействие -> goToSleep()");
+            goToSleep();
         }
     }
 
@@ -434,10 +481,12 @@ void setup() {
     AnimManager::init(tft);
     AnimManager::setAnimation(AnimType::IDLE, true);
 
-    lastFrameTime  = millis();
-    fpsWindowStart = lastFrameTime;
+    lastFrameTime    = millis();
+    fpsWindowStart   = lastFrameTime;
+    lastActivityTime = lastFrameTime; // инициализируем таймер активности
 
     Serial.println("[main] Robot ready");
+
 }
 
 // ============================================================================
@@ -484,6 +533,7 @@ void loop() {
         handleTaps(now);
         handleRocking(now);
         handleAutoIdle(now);
+        handleInactivity(now); // <-- добавили вызов проверки бездействия
     }
 
     // 4. Отрисовка рабочего кадра (~60 FPS)
