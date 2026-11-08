@@ -128,31 +128,37 @@ namespace {
         if (fabsf(MotionDetector::getGyroY()) > rotSpeed) rotSpeed = fabsf(MotionDetector::getGyroY());
         if (fabsf(MotionDetector::getGyroZ()) > rotSpeed) rotSpeed = fabsf(MotionDetector::getGyroZ());
 
-        // А) ТРЯСКА КОРПУСА -> плавное ворчливое пробуждение
-        // Срабатывает по детектору тряски ЛИБО если робота активно вращают/трясут (> 120 °/с)
-        if (MotionDetector::consumeShake() || rotSpeed > 120.0f) {
+        // А) ТРЯСКА КОРПУСА -> плавное ворчливое пробуждение (wakeUpGrumpy)
+        // Требуется ЗАМЕТНАЯ осознанная тряска: специализированный детектор тряски
+        // (знакопеременные рывки >170 °/с) ЛИБО очень резкое вращение (>250 °/с).
+        // Обычные плавные движения, подъем со стола и переноска робота не будят его.
+        bool isShaking = MotionDetector::consumeShake() || (rotSpeed > 250.0f);
+        if (isShaking) {
             wakeByShake++;
-            Serial.println("[main] Тряска -> wakeUpGrumpy (ворчливое пробуждение)");
-            // Сбрасываем ложные стуки, вызванные тряской
-            TapDetector::consumeTap();
+            Serial.println("[main] Заметная тряска -> wakeUpGrumpy (вялое ворчание)");
+            // Сбрасываем любые стуки, возникшие из-за ускорений при тряске
+            while (TapDetector::consumeTap()) {}
             AnimSleep::wakeUpGrumpy();
             return;
         }
 
         // Б) НАСТОЙЧИВЫЙ СТУК ПО СПЯЩЕМУ РОБОТУ -> ярость
-        // Принимается ТОЛЬКО когда корпус спокоен (нет тряски, rotSpeed < 80 °/с)
+        // Принимается ТОЛЬКО при строгом покое корпуса (порог rotSpeed < 25 °/с)
         if (TapDetector::consumeTap()) {
-            if (rotSpeed < 80.0f) {
+            if (rotSpeed < 25.0f) {
                 int combo = TapDetector::getComboCount();
                 Serial.printf("[SLEEP] Стук в покое! combo = %d\n", combo);
 
-                // Серия из 3 стуков при неподвижном корпусе будит робота в ярости
+                // Серия из 3 стуков по неподвижному роботу будит его в ярости
                 if (combo >= 3) {
                     wakeByTaps++;
                     Serial.println("[main] Разбудили стуком -> wakeUpAngry (ярость)");
                     AnimSleep::wakeUpAngry();
                     return;
                 }
+            } else {
+                // Если робот в этот момент двигался или трясся — стук отбрасывается как помеха
+                Serial.printf("[SLEEP] Стук во время движения отклонён (rotSpeed=%.1f)\n", rotSpeed);
             }
         }
     }
