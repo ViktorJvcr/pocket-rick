@@ -1,6 +1,8 @@
 #include <Arduino.h>
 #include <TFT_eSPI.h>
 #include <Wire.h>
+#include "anim_intro.h"
+
 
 #include "pins.h"
 #include "hardware/touch_input.h"
@@ -467,6 +469,11 @@ void setup() {
     sprite.createSprite(240, 200);
     sprite.fillSprite(TFT_BLACK);
 
+    // ==========================================
+    // Заставка "Любовь. Смерть. Роботы"
+    // ==========================================
+    AnimIntro::play(tft, sprite);
+
     // Сенсорные кнопки
     TouchInput::init();
 
@@ -483,8 +490,7 @@ void setup() {
 
     lastFrameTime    = millis();
     fpsWindowStart   = lastFrameTime;
-    lastActivityTime = lastFrameTime; // инициализируем таймер активности
-
+    lastActivityTime = lastFrameTime; // отсчет неактивности пойдет строго ПОСЛЕ заставки
     Serial.println("[main] Robot ready");
 
 }
