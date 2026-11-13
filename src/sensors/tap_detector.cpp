@@ -130,8 +130,8 @@ namespace {
         // Направление удара в плоскости экрана (dZ — удар "в лицо", направления не дает).
         float len = sqrtf(dX * dX + dY * dY);
         if (len > 0.05f) {
-            tapDirX = -((dX / len) * TAP_DIR_X); // Инвертировано для поворота экрана на 180°
-            tapDirY = -((dY / len) * TAP_DIR_Y); // Инвертировано для поворота экрана на 180°
+            tapDirX = -((dX / len) * TAP_DIR_X);
+            tapDirY = -((dY / len) * TAP_DIR_Y);
         } else {
             tapDirX = 0.0f;
             tapDirY = 0.0f;

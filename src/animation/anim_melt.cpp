@@ -584,7 +584,7 @@ void runStep(TFT_eSPI &tft, TFT_eSprite &sprite) {
     drawScene(sprite, 2, colorGlow1);
     drawScene(sprite, 0, colorEye);
     drawDetails(sprite);
-    sprite.pushSprite(0, 0);
+    sprite.pushSprite(0, 40);
 }
 
 } // namespace AnimMelt

@@ -352,7 +352,7 @@ void runStep(TFT_eSPI &tft, TFT_eSprite &sprite) {
         }
     }
 
-    sprite.pushSprite(0, 0);
+    sprite.pushSprite(0, 40);
 }
 
 } // namespace AnimJoy

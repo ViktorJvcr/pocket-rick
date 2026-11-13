@@ -308,7 +308,7 @@ namespace AnimIdle {
             sprite.fillRoundRect(m_x, m_y, (int)mw, (int)mh, 2, COLOR_EYE); 
         }
 
-        sprite.pushSprite(0, 0);
+        sprite.pushSprite(0, 40);
     }
 
 } // namespace AnimIdle
