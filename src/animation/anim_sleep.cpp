@@ -551,7 +551,7 @@ void runStep(TFT_eSPI &tft, TFT_eSprite &sprite) {
     drawEye(sprite, lx, fy, out[CH_CL], out[CH_BU], out[CH_SL], out[CH_BOT], -1.0f);
     drawEye(sprite, rx, fy, out[CH_CR], out[CH_BU], out[CH_SR], out[CH_BOT],  1.0f);
     drawMouth(sprite, fx, fy + MOUTH_DY, out[CH_MW], out[CH_YAWN], out[CH_GR]);
-    sprite.pushSprite(0, 40);
+    sprite.pushSprite(0, 0);
 
     // Геометрия для бесшовной передачи в IDLE / ANGER
     float visL = EYE_H * (1.0f - out[CH_CL]);

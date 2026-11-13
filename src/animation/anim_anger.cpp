@@ -327,7 +327,7 @@ void runStep(TFT_eSPI &tft, TFT_eSprite &sprite) {
     drawVeinSymbol(sprite, (int)(rx + 34.0f), (int)(cur_cy - 48.0f), veinScale);
 
     // Вывод буфера на дисплей со смещением 40 пикселей сверху
-    sprite.pushSprite(0, 40);
+    sprite.pushSprite(0, 0);
 }
 
 } // namespace AnimAnger

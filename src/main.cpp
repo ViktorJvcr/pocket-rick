@@ -497,7 +497,7 @@ namespace {
         sprite.setTextColor(TFT_DARKGREY, TFT_BLACK);
         sprite.drawString("Hold both buttons 1.5s = exit", 6, 182);
 
-        sprite.pushSprite(0, 40);
+        sprite.pushSprite(0, 0);
     }
 } // anonymous namespace
 
@@ -514,7 +514,7 @@ void setup() {
 
     // Инициализация экрана
     tft.init();
-    tft.setRotation(0);
+    tft.setRotation(2);
     tft.fillScreen(TFT_BLACK);
 
     // Единый буфер кадра 240x200

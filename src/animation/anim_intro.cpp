@@ -6,7 +6,7 @@ namespace {
 
 constexpr int kWidth   = 240;
 constexpr int kHeight  = 200;
-constexpr int kScreenY = 40;
+constexpr int kScreenY = 0;
 
 constexpr int kCenterX = 120;
 constexpr int kCenterY = 100;

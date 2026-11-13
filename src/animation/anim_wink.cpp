@@ -788,7 +788,7 @@ void runStep(TFT_eSPI &tft, TFT_eSprite &sprite) {
 
     drawSparkles(sprite, rx, cy, time);
 
-    sprite.pushSprite(0, 40);
+    sprite.pushSprite(0, 0);
 
     // main.cpp получает true только после полностью раскрытых глаз
     // и исчезновения декоративных элементов.

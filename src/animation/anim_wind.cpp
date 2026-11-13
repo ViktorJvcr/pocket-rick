@@ -410,7 +410,7 @@ void runStep(TFT_eSPI &tft, TFT_eSprite &sprite) {
 
     drawWindParticles(sprite, timeSec, windIntensity);
 
-    sprite.pushSprite(0, 40);
+    sprite.pushSprite(0, 0);
 }
 
 } // namespace AnimWind

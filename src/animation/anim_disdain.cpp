@@ -377,7 +377,7 @@ void runStep(TFT_eSPI &tft, TFT_eSprite &sprite) {
         finished = true;
     }
 
-    sprite.pushSprite(0, 40);
+    sprite.pushSprite(0, 0);
 }
 
 } // namespace AnimDisdain

@@ -449,7 +449,7 @@ void runStep(TFT_eSPI &tft, TFT_eSprite &sprite) {
 
     updateAndDrawTears(sprite, now);
 
-    sprite.pushSprite(0, 40);
+    sprite.pushSprite(0, 0);
 }
 
 } // namespace AnimSad

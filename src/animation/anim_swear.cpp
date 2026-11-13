@@ -700,7 +700,7 @@ void runStep(TFT_eSPI &tft, TFT_eSprite &sprite) {
     updateAndDrawParticles(sprite, now, dt, mouthX, mouthY, isShouting, isCensored);
     drawCensorBar(sprite, mouthX, mouthY, censorAlpha, now);
 
-    sprite.pushSprite(0, 40);
+    sprite.pushSprite(0, 0);
 }
 
 } // namespace AnimSwear

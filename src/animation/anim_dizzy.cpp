@@ -449,7 +449,7 @@ void runStep(TFT_eSPI &tft, TFT_eSprite &sprite) {
     drawDizzyBrows(sprite, lx, curCy + eyeOffsetY, rx, curCy - eyeOffsetY, timeSec * 4.0f);
     updateAndDrawParticles(sprite, cx + shakeX, mouthY, isPuking, timeSec);
 
-    sprite.pushSprite(0, 40);
+    sprite.pushSprite(0, 0);
 }
 
 } // namespace AnimDizzy

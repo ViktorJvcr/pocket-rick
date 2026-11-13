@@ -58,7 +58,7 @@ void initDisplay(TFT_eSPI &tft, TFT_eSprite &sprite) {
     if (spritePtr != nullptr) {
         Serial.println("[DISPLAY] Буфер спрайта успешно создан!");
         sprite.fillSprite(TFT_BLACK);
-        sprite.pushSprite(0, 40); // Центрируем по вертикали (отступ 40 сверху)
+        sprite.pushSprite(0, 0); // Центрируем по вертикали (отступ 40 сверху)
     } else {
         Serial.println("[DISPLAY] ОШИБКА: Не удалось выделить память под спрайт!");
     }
