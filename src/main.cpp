@@ -47,7 +47,7 @@ namespace {
     const uint32_t DISCO_MS               = 8000;   // Disco (3 тапа Mid)
     const uint32_t CYBER_MS               = 7000;   // Cyber Rain (3 тапа Right)
     const uint32_t LONG_HOLD_MS           = 2500;   // порог долгого зажатия (>2.5 с)
-    const uint32_t AFTER_RELEASE_MS       = 2500;   // доигровка эффекта после отпускания кнопки
+    const uint32_t AFTER_RELEASE_MS       = 4000;   // доигровка эффекта после отпускания кнопки
     const uint32_t MELT_DELAY_MS          = 1800;   // удержание вверх ногами до стекания
     const uint32_t MELT_MIN_SHOW_MS       = 600;    // минимальное время показа лужи
 
