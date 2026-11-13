@@ -13,13 +13,19 @@ enum class AnimType {
     WINK    = 8,
     DISDAIN = 9,
     LOOK    = 10,
-    MELT    = 11
+    MELT    = 11,
+    DISCO   = 12,
+    GLITCH  = 13,
+    SHOCK   = 14,
+    REBOOT  = 15,
+    SPARKLE = 16,
+    CYBER   = 17
 };
 
 namespace AnimManager {
     void init(TFT_eSPI &tft);
     void runCurrentAnimation(TFT_eSPI &tft, TFT_eSprite &sprite);
-    void setAnimation(AnimType newAnim, bool blink = true); // <-- здесь добавлен аргумент со значением по умолчанию
+    void setAnimation(AnimType newAnim, bool blink = true);
     void nextState();
     const char* getAnimName(AnimType anim);
     AnimType getCurrentAnim();

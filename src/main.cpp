@@ -41,7 +41,13 @@ namespace {
     const uint32_t DISDAIN_MS             = 2800;   // презрение при 3 стуках
     const uint32_t SWEAR_MS               = 2600;   // ругань при 5 стуках
     const uint32_t DIZZY_MS               = 6200;   // укачивание/головокружение от тряски (6.2 с)
-    const uint32_t WINK_MS                = 1800;   // длительность подмигивания (1.8 с)
+    const uint32_t WINK_MS                = 1800;   // подмигивание (1 тап Mid)
+    const uint32_t REBOOT_MS              = 3600;   // Reboot Wink (2 тапа Mid)
+    const uint32_t SPARKLE_MS             = 2000;   // Double Sparkle (2 тапа Right)
+    const uint32_t DISCO_MS               = 8000;   // Disco (3 тапа Mid)
+    const uint32_t CYBER_MS               = 7000;   // Cyber Rain (3 тапа Right)
+    const uint32_t LONG_HOLD_MS           = 2500;   // порог долгого зажатия (>2.5 с)
+    const uint32_t AFTER_RELEASE_MS       = 2500;   // доигровка эффекта после отпускания кнопки
     const uint32_t MELT_DELAY_MS          = 1800;   // удержание вверх ногами до стекания
     const uint32_t MELT_MIN_SHOW_MS       = 600;    // минимальное время показа лужи
 
@@ -56,8 +62,10 @@ namespace {
    const uint32_t INACTIVITY_SLEEP_MS    = 60000;  // Время бездействия до сна (60 сек, настройте под себя)
 
     uint32_t autoIdleAt            = 0;      // таймер возврата в IDLE (0 = выключен)
-    uint32_t rightDownStart        = 0;      // момент нажатия правой кнопки (0 = отпущена)
-    bool     angerLatched          = false;  // срыв в ярость зафиксирован
+    uint32_t rightDownStart        = 0;      // момент нажатия правой кнопки
+    uint32_t midDownStart          = 0;      // момент нажатия средней кнопки
+    bool     glitchLatched         = false;  // Portal Glitch зафиксирован (удержание Mid)
+    bool     shockLatched          = false;  // Short Circuit зафиксирован (удержание Right)
     uint32_t meltStartMs           = 0;
     uint32_t meltCooldownUntil     = 0;      // защита от сна во время и после сборки лужи
     uint32_t lastActivityTime      = 0;      // время последнего действия/жеста
@@ -80,7 +88,8 @@ namespace {
     void goIdle() {
         AnimManager::setAnimation(AnimType::IDLE, true);
         autoIdleAt       = 0;
-        angerLatched     = false;
+        glitchLatched    = false;
+        shockLatched     = false;
         lastActivityTime = millis(); // сбрасываем таймер неактивности при переходе в IDLE
         (void)MotionDetector::consumeRocking(); // сбрасываем счетчики и флаг укачивания
     }
@@ -94,7 +103,9 @@ namespace {
         AnimManager::setAnimation(AnimType::SLEEP, true);
         autoIdleAt     = 0;
         rightDownStart = 0;
-        angerLatched   = false;
+        midDownStart   = 0;
+        glitchLatched  = false;
+        shockLatched   = false;
         sleepEvents++;
         Serial.printf("[main] %s -> SLEEP\n", reason);
     }
@@ -103,12 +114,18 @@ namespace {
     void drainInputsWhileSleeping() {
         (void)TouchInput::isRightClicked();
         (void)TouchInput::isMidClicked();
+        (void)TouchInput::isMidDoubleClicked();
         (void)TouchInput::isRightDoubleClicked();
+        (void)TouchInput::isMidTripleClicked();
+        (void)TouchInput::isRightTripleClicked();
+        (void)TouchInput::isMidHold();
         (void)TouchInput::isRightHold();
         (void)TouchInput::isTickleDetected();
         (void)MotionDetector::consumeRocking();
         rightDownStart = 0;
-        angerLatched   = false;
+        midDownStart   = 0;
+        glitchLatched  = false;
+        shockLatched   = false;
     }
 
     // ------------------------------------------------------------------------
@@ -200,7 +217,9 @@ namespace {
                 meltStartMs       = now;
                 autoIdleAt        = 0;
                 rightDownStart    = 0;
-                angerLatched      = false;
+                midDownStart      = 0;
+                glitchLatched     = false;
+                shockLatched      = false;
                 meltCooldownUntil = now + 6000;
                 (void)MotionDetector::consumeRocking();
             }
@@ -239,29 +258,94 @@ namespace {
             lastActivityTime = now;
         }
 
-        // Щекотка (быстрое поочерёдное нажатие)
-        if (TouchInput::isTickleDetected() && cur != AnimType::ANGER && cur != AnimType::MELT) {
+        // --- 0. Щекотка (быстрое чередование кнопок) ---
+        if (TouchInput::isTickleDetected() && cur != AnimType::MELT) {
             startTimedAnim(AnimType::LAUGH, LAUGH_MS, now);
             rightDownStart = 0;
-            angerLatched   = false;
-            TouchInput::isRightClicked();
+            midDownStart   = 0;
+            glitchLatched  = false;
+            shockLatched   = false;
+            (void)TouchInput::isRightClicked();
+            (void)TouchInput::isMidClicked();
             return;
         }
 
-        // Правая кнопка: поглаживание / срыв в ярость
+        // --- 1. ТРОЙНЫЕ ТАПЫ (Приоритет) ---
+        // Mid: 3 тапа -> ДИСКОТЕКА (повторные 3 тапа выключают)
+        if (TouchInput::isMidTripleClicked()) {
+            lastActivityTime = now;
+            (void)MotionDetector::consumeRocking();
+            if (cur == AnimType::DISCO) {
+                goIdle();
+            } else {
+                startTimedAnim(AnimType::DISCO, DISCO_MS, now, true);
+            }
+            return;
+        }
+
+        // Right: 3 тапа -> CYBER RAIN (Matrix)
+        if (TouchInput::isRightTripleClicked()) {
+            lastActivityTime = now;
+            (void)MotionDetector::consumeRocking();
+            if (cur == AnimType::CYBER) {
+                goIdle();
+            } else {
+                startTimedAnim(AnimType::CYBER, CYBER_MS, now, false);
+            }
+            return;
+        }
+
+        // --- 2. ДВОЙНЫЕ ТАПЫ ---
+        // Mid: 2 тапа -> REBOOT WINK (Мини-перезагрузка системы)
+        if (TouchInput::isMidDoubleClicked() && isCalmState(cur)) {
+            startTimedAnim(AnimType::REBOOT, REBOOT_MS, now, false);
+            lastActivityTime = now;
+            (void)MotionDetector::consumeRocking();
+            return;
+        }
+
+        // Right: 2 тапа -> DOUBLE SPARKLE (Двойные искры радости ^^)
+        if (TouchInput::isRightDoubleClicked() && isCalmState(cur)) {
+            startTimedAnim(AnimType::SPARKLE, SPARKLE_MS, now, false);
+            lastActivityTime = now;
+            (void)MotionDetector::consumeRocking();
+            return;
+        }
+
+        // --- 3. УДЕРЖАНИЕ КНОПКИ 1 (MID): > 2.5с -> PORTAL GLITCH ---
+        bool midDown = TouchInput::isMidDown();
+        if (midDown) {
+            if (midDownStart == 0) {
+                midDownStart = now;
+                glitchLatched = false;
+            }
+            uint32_t held = now - midDownStart;
+            if (held >= LONG_HOLD_MS && !glitchLatched) {
+                glitchLatched = true;
+                AnimManager::setAnimation(AnimType::GLITCH, false);
+                autoIdleAt = 0;
+            }
+        } else if (midDownStart != 0) {
+            midDownStart = 0;
+            if (glitchLatched && cur == AnimType::GLITCH) {
+                autoIdleAt = now + AFTER_RELEASE_MS; // доигрывает 2.5 с после отпускания
+            }
+        }
+
+        // --- 4. УДЕРЖАНИЕ КНОПКИ 2 (RIGHT): 0.3-2.5с -> JOY, > 2.5с -> SHORT CIRCUIT ---
         bool rightDown = TouchInput::isRightDown();
         if (rightDown) {
             if (rightDownStart == 0) {
                 rightDownStart = now;
-                angerLatched   = false;
+                shockLatched   = false;
             }
             uint32_t held = now - rightDownStart;
 
-            if (held >= ANGER_HOLD_MS && !angerLatched) {
-                angerLatched = true;
-                AnimManager::setAnimation(AnimType::ANGER, false);
+            if (held >= LONG_HOLD_MS && !shockLatched) {
+                shockLatched = true;
+                AnimManager::setAnimation(AnimType::SHOCK, false);
                 autoIdleAt = 0;
-            } else if (held >= JOY_HOLD_MIN_MS && !angerLatched && isCalmState(cur)) {
+            } else if (held >= JOY_HOLD_MIN_MS && !shockLatched && isCalmState(cur)) {
                 AnimManager::setAnimation(AnimType::JOY, true);
                 autoIdleAt = 0;
             }
@@ -269,8 +353,8 @@ namespace {
             uint32_t held = now - rightDownStart;
             rightDownStart = 0;
 
-            if (angerLatched && cur == AnimType::ANGER) {
-                autoIdleAt = now + ANGER_AFTER_RELEASE_MS; // злится ещё 3 с
+            if (shockLatched && cur == AnimType::SHOCK) {
+                autoIdleAt = now + AFTER_RELEASE_MS; // разряды доигрывают 2.5 с
             } else if (cur == AnimType::JOY) {
                 if (held >= JOY_HOLD_MIN_MS) {
                     goIdle();
@@ -280,17 +364,18 @@ namespace {
 
         cur = AnimManager::getCurrentAnim();
 
-        // Быстрый одиночный клик правой кнопки -> радость на 2 с
+        // --- 5. ОДИНОЧНЫЕ КЛИКИ ---
+        // Right: 1 клик -> Радость на 2 с
         if (TouchInput::isRightClicked() && rightDownStart == 0 && cur == AnimType::IDLE) {
             startTimedAnim(AnimType::JOY, JOY_TAP_MS, now);
             cur = AnimType::JOY;
         }
 
-        // Центральная кнопка -> подмигивание
+        // Mid: 1 клик -> Подмигивание
         if (TouchInput::isMidClicked() && isCalmState(cur)) {
             startTimedAnim(AnimType::WINK, WINK_MS, now);
             lastActivityTime = now;
-            (void)MotionDetector::consumeRocking(); // отсекаем ложное укачивание от касания кнопки
+            (void)MotionDetector::consumeRocking();
             cur = AnimType::WINK;
         }
     }
@@ -396,7 +481,10 @@ namespace {
         if (cur == AnimType::JOY     || cur == AnimType::LAUGH   ||
             cur == AnimType::LOOK    || cur == AnimType::DISDAIN ||
             cur == AnimType::SWEAR   || cur == AnimType::ANGER   ||
-            cur == AnimType::DIZZY   || cur == AnimType::WINK) {
+            cur == AnimType::DIZZY   || cur == AnimType::WINK    ||
+            cur == AnimType::DISCO   || cur == AnimType::GLITCH  ||
+            cur == AnimType::SHOCK   || cur == AnimType::REBOOT  ||
+            cur == AnimType::SPARKLE || cur == AnimType::CYBER) {
             goIdle();
             lastActivityTime = now; // робот только что успокоился, таймер бездействия пошёл
         } else {

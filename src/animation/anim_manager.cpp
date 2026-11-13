@@ -12,13 +12,19 @@
 #include "anim_disdain.h"
 #include "anim_lookat.h"
 #include "anim_melt.h"
+#include "anim_disco.h"
+#include "anim_glitch.h"
+#include "anim_shock.h"
+#include "anim_reboot.h"
+#include "anim_sparkle.h"
+#include "anim_cyber.h"
 #include <Arduino.h>
 
 namespace AnimManager {
 
 namespace {
     AnimType currentAnim = AnimType::IDLE;
-    const int CYCLE_MAX = (int)AnimType::LOOK; // MELT активируется только физическим переворотом
+    const int CYCLE_MAX = (int)AnimType::LOOK;
 }
 
 void init(TFT_eSPI &tft) {
@@ -34,12 +40,18 @@ void init(TFT_eSPI &tft) {
     AnimDisdain::init(tft);
     AnimLookAt::init(tft);
     AnimMelt::init(tft);
+    AnimDisco::init(tft);
+    AnimGlitch::init(tft);
+    AnimShock::init(tft);
+    AnimReboot::init(tft);
+    AnimSparkle::init(tft);
+    AnimCyber::init(tft);
+
     currentAnim = AnimType::IDLE;
     AnimIdle::reset();
 }
 
 void setAnimation(AnimType newAnim, bool blink) {
-    // Если blink == false (например, бесшовный переход сон -> ярость), рефлекторный прищур отключается
     FaceState::prepareTransition(blink);
     currentAnim = newAnim;
 
@@ -56,6 +68,12 @@ void setAnimation(AnimType newAnim, bool blink) {
         case AnimType::DISDAIN: AnimDisdain::reset(); break;
         case AnimType::LOOK:    AnimLookAt::reset();  break;
         case AnimType::MELT:    AnimMelt::reset();    break;
+        case AnimType::DISCO:   AnimDisco::reset();   break;
+        case AnimType::GLITCH:  AnimGlitch::reset();  break;
+        case AnimType::SHOCK:   AnimShock::reset();   break;
+        case AnimType::REBOOT:  AnimReboot::reset();  break;
+        case AnimType::SPARKLE: AnimSparkle::reset(); break;
+        case AnimType::CYBER:   AnimCyber::reset();   break;
     }
     Serial.printf("[ANIM] -> %s\n", getAnimName(currentAnim));
 }
@@ -76,6 +94,12 @@ void runCurrentAnimation(TFT_eSPI &tft, TFT_eSprite &sprite) {
         case AnimType::DISDAIN: AnimDisdain::runStep(tft, sprite); break;
         case AnimType::LOOK:    AnimLookAt::runStep(tft, sprite);  break;
         case AnimType::MELT:    AnimMelt::runStep(tft, sprite);    break;
+        case AnimType::DISCO:   AnimDisco::runStep(tft, sprite);   break;
+        case AnimType::GLITCH:  AnimGlitch::runStep(tft, sprite);  break;
+        case AnimType::SHOCK:   AnimShock::runStep(tft, sprite);   break;
+        case AnimType::REBOOT:  AnimReboot::runStep(tft, sprite);  break;
+        case AnimType::SPARKLE: AnimSparkle::runStep(tft, sprite); break;
+        case AnimType::CYBER:   AnimCyber::runStep(tft, sprite);   break;
     }
 }
 
@@ -99,6 +123,12 @@ const char* getAnimName(AnimType anim) {
         case AnimType::DISDAIN: return "DISDAIN";
         case AnimType::LOOK:    return "LOOK";
         case AnimType::MELT:    return "MELT";
+        case AnimType::DISCO:   return "DISCO";
+        case AnimType::GLITCH:  return "GLITCH";
+        case AnimType::SHOCK:   return "SHOCK";
+        case AnimType::REBOOT:  return "REBOOT";
+        case AnimType::SPARKLE: return "SPARKLE";
+        case AnimType::CYBER:   return "CYBER";
     }
     return "UNKNOWN";
 }

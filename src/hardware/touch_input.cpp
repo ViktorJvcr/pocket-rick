@@ -8,18 +8,20 @@ namespace {
     bool eventBothHold = false;
 
     // Переменные для детекции щекотки (чередование кнопок)
-    int lastTappedBtn = 0;          // 1 = Mid (GPIO 20), 2 = Right (GPIO 21)
+    int lastTappedBtn = 0;          // 1 = Mid, 2 = Right
     unsigned long lastTapTime = 0;
     int tickleStreak = 0;
     bool eventTickle = false;
-    constexpr unsigned long TICKLE_MAX_INTERVAL_MS = 450; // Максимальная пауза между тапами
+    constexpr unsigned long TICKLE_MAX_INTERVAL_MS = 450;
 
     enum BtnState {
         STATE_IDLE,
         STATE_DEBOUNCE,
-        STATE_PRESSED,
-        STATE_HOLD,
-        STATE_WAIT_DOUBLE
+        STATE_PRESSED_1,
+        STATE_WAIT_DOUBLE,
+        STATE_PRESSED_2,
+        STATE_WAIT_TRIPLE,
+        STATE_HOLD
     };
 
     struct TouchBtn {
@@ -27,13 +29,15 @@ namespace {
         BtnState state;
         bool rawState;
         unsigned long stateChangeTime;
+        unsigned long pressStartTime;
         bool eventClick;
         bool eventDoubleClick;
+        bool eventTripleClick;
         bool eventHold;
     };
 
-    TouchBtn btnMid   = { TOUCH_MID_PIN,   STATE_IDLE, false, 0, false, false, false };
-    TouchBtn btnRight = { TOUCH_RIGHT_PIN, STATE_IDLE, false, 0, false, false, false };
+    TouchBtn btnMid   = { TOUCH_MID_PIN,   STATE_IDLE, false, 0, 0, false, false, false, false };
+    TouchBtn btnRight = { TOUCH_RIGHT_PIN, STATE_IDLE, false, 0, 0, false, false, false, false };
 
     void processButton(TouchBtn &btn, unsigned long now) {
         bool isDown = (digitalRead(btn.pin) == HIGH);
@@ -49,17 +53,18 @@ namespace {
             case STATE_DEBOUNCE:
                 if (isDown) {
                     if (now - btn.stateChangeTime >= DEBOUNCE_DELAY_MS) {
-                        btn.state = STATE_PRESSED;
+                        btn.state = STATE_PRESSED_1;
                         btn.stateChangeTime = now;
+                        btn.pressStartTime = now;
                     }
                 } else {
                     btn.state = STATE_IDLE;
                 }
                 break;
 
-            case STATE_PRESSED:
+            case STATE_PRESSED_1:
                 if (isDown) {
-                    if (now - btn.stateChangeTime >= HOLD_DELAY_MS) {
+                    if (now - btn.pressStartTime >= HOLD_DELAY_MS) {
                         btn.eventHold = true;
                         btn.state = STATE_HOLD;
                     }
@@ -69,19 +74,42 @@ namespace {
                 }
                 break;
 
-            case STATE_HOLD:
-                if (!isDown) {
+            case STATE_WAIT_DOUBLE:
+                if (isDown) {
+                    btn.state = STATE_PRESSED_2;
+                    btn.stateChangeTime = now;
+                } else if (now - btn.stateChangeTime >= DOUBLE_CLICK_MS) {
+                    btn.eventClick = true;
                     btn.state = STATE_IDLE;
                 }
                 break;
 
-            case STATE_WAIT_DOUBLE:
+            case STATE_PRESSED_2:
                 if (isDown) {
-                    btn.eventDoubleClick = true;
+                    if (now - btn.stateChangeTime >= HOLD_DELAY_MS) {
+                        btn.eventHold = true;
+                        btn.state = STATE_HOLD;
+                    }
+                } else {
+                    btn.state = STATE_WAIT_TRIPLE;
+                    btn.stateChangeTime = now;
+                }
+                break;
+
+            case STATE_WAIT_TRIPLE:
+                if (isDown) {
+                    btn.eventTripleClick = true;
                     btn.state = STATE_HOLD;
                 } else if (now - btn.stateChangeTime >= DOUBLE_CLICK_MS) {
-                    btn.eventClick = true;
+                    btn.eventDoubleClick = true;
                     btn.state = STATE_IDLE;
+                }
+                break;
+
+            case STATE_HOLD:
+                if (!isDown) {
+                    btn.state = STATE_IDLE;
+                    btn.eventHold = false;
                 }
                 break;
         }
@@ -109,32 +137,28 @@ void update() {
     processButton(btnMid, now);
     processButton(btnRight, now);
 
-        // --- Детекция щекотки (быстрое чередование левой и правой кнопки) ---
-    bool midHit = (btnMid.rawState && btnMid.state == STATE_PRESSED && btnMid.stateChangeTime == now);
-    bool rightHit = (btnRight.rawState && btnRight.state == STATE_PRESSED && btnRight.stateChangeTime == now);
+    // --- Детекция щекотки ---
+    bool midHit = (btnMid.rawState && btnMid.state == STATE_PRESSED_1 && btnMid.stateChangeTime == now);
+    bool rightHit = (btnRight.rawState && btnRight.state == STATE_PRESSED_1 && btnRight.stateChangeTime == now);
 
     if (midHit || rightHit) {
         int currentHit = midHit ? 1 : 2;
 
         if (lastTappedBtn != 0 && currentHit != lastTappedBtn && (now - lastTapTime <= TICKLE_MAX_INTERVAL_MS)) {
-            // Кнопка сменилась вовремя -> увеличиваем серию
             tickleStreak++;
-            if (tickleStreak >= 3) { // 3 успешных чередования подряд
+            if (tickleStreak >= 3) {
                 eventTickle = true;
             }
         } else {
-            // Слишком долго ждали или нажали ту же кнопку дважды -> сброс серии
             tickleStreak = 1;
         }
 
         lastTappedBtn = currentHit;
         lastTapTime = now;
     } else if (now - lastTapTime > TICKLE_MAX_INTERVAL_MS) {
-        // Время вышло — серия сбрасывается
         tickleStreak = 0;
         lastTappedBtn = 0;
     }
-
 
     // Логика зажатия обеих кнопок
     if (btnMid.rawState && btnRight.rawState) {
@@ -147,9 +171,11 @@ void update() {
 
             btnMid.eventClick = false;
             btnMid.eventDoubleClick = false;
+            btnMid.eventTripleClick = false;
             btnMid.eventHold = false;
             btnRight.eventClick = false;
             btnRight.eventDoubleClick = false;
+            btnRight.eventTripleClick = false;
             btnRight.eventHold = false;
         }
     } else {
@@ -158,78 +184,58 @@ void update() {
 }
 
 bool isMidClicked() {
-    if (btnMid.eventClick) {
-        btnMid.eventClick = false;
-        return true;
-    }
+    if (btnMid.eventClick) { btnMid.eventClick = false; return true; }
     return false;
 }
 
 bool isRightClicked() {
-    if (btnRight.eventClick) {
-        btnRight.eventClick = false;
-        return true;
-    }
+    if (btnRight.eventClick) { btnRight.eventClick = false; return true; }
     return false;
 }
 
 bool isMidDoubleClicked() {
-    if (btnMid.eventDoubleClick) {
-        btnMid.eventDoubleClick = false;
-        return true;
-    }
+    if (btnMid.eventDoubleClick) { btnMid.eventDoubleClick = false; return true; }
     return false;
 }
 
 bool isRightDoubleClicked() {
-    if (btnRight.eventDoubleClick) {
-        btnRight.eventDoubleClick = false;
-        return true;
-    }
+    if (btnRight.eventDoubleClick) { btnRight.eventDoubleClick = false; return true; }
     return false;
 }
 
-bool isMidHold() {
-    if (btnMid.eventHold) {
-        btnMid.eventHold = false;
-        return true;
-    }
+bool isMidTripleClicked() {
+    if (btnMid.eventTripleClick) { btnMid.eventTripleClick = false; return true; }
     return false;
 }
 
-bool isRightHold() {
-    if (btnRight.eventHold) {
-        btnRight.eventHold = false;
-        return true;
-    }
+bool isRightTripleClicked() {
+    if (btnRight.eventTripleClick) { btnRight.eventTripleClick = false; return true; }
     return false;
 }
 
-bool isBothHold() {
-    if (eventBothHold) {
-        eventBothHold = false;
-        return true;
-    }
+bool isMidHold()   { return btnMid.eventHold || (btnMid.rawState && btnMid.state == STATE_HOLD); }
+bool isRightHold() { return btnRight.eventHold || (btnRight.rawState && btnRight.state == STATE_HOLD); }
+bool isBothHold()  {
+    if (eventBothHold) { eventBothHold = false; return true; }
     return false;
 }
 
-bool isMidDown() {
-    return btnMid.rawState;
+uint32_t getMidHoldDuration() {
+    if (!btnMid.rawState) return 0;
+    return millis() - btnMid.pressStartTime;
 }
 
-bool isRightDown() {
-    return btnRight.rawState;
+uint32_t getRightHoldDuration() {
+    if (!btnRight.rawState) return 0;
+    return millis() - btnRight.pressStartTime;
 }
 
-bool isBothDown() {
-    return btnMid.rawState && btnRight.rawState;
-}
+bool isMidDown()   { return btnMid.rawState; }
+bool isRightDown() { return btnRight.rawState; }
+bool isBothDown()  { return btnMid.rawState && btnRight.rawState; }
 
 bool isTickleDetected() {
-    if (eventTickle) {
-        eventTickle = false;
-        return true;
-    }
+    if (eventTickle) { eventTickle = false; return true; }
     return false;
 }
 

@@ -4,10 +4,11 @@
 
 namespace TouchInput {
     // Временные пороги (мс)
-    constexpr unsigned long ARM_DELAY_MS       = 400;  // Защита от помех UART0 при старте
+    constexpr unsigned long ARM_DELAY_MS       = 400;  // Защита от помех при старте
     constexpr unsigned long DEBOUNCE_DELAY_MS  = 35;   // Антидребезг
-    constexpr unsigned long DOUBLE_CLICK_MS    = 280;  // Окно ожидания второго клика
-    constexpr unsigned long HOLD_DELAY_MS      = 800;  // Одиночное удержание
+    constexpr unsigned long DOUBLE_CLICK_MS    = 280;  // Окно ожидания следующего клика
+    constexpr unsigned long HOLD_DELAY_MS      = 600;  // Порог начала удержания
+    constexpr unsigned long LONG_HOLD_MS       = 2500; // Порог долгого удержания (Portal Glitch / Short Circuit)
     constexpr unsigned long BOTH_HOLD_DELAY_MS = 1500; // Удержание обеих кнопок (сервисное меню)
 
     void init();
@@ -21,11 +22,19 @@ namespace TouchInput {
     bool isMidDoubleClicked();
     bool isRightDoubleClicked();
 
-    // Удержания
+    // Тройные клики
+    bool isMidTripleClicked();
+    bool isRightTripleClicked();
+
+    // Удержания (уровень)
     bool isMidHold();
     bool isRightHold();
     bool isBothHold();
-    bool isTickleDetected();      // Сработало быстрое поочередное нажатие (щекотка)
+    bool isTickleDetected();      // Быстрое поочередное нажатие (щекотка)
+
+    // Длительность текущего удержания (мс, 0 если не удерживается)
+    uint32_t getMidHoldDuration();
+    uint32_t getRightHoldDuration();
 
     // Текущие состояния
     bool isMidDown();
